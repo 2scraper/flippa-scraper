@@ -7,11 +7,11 @@ means fixes, not that every flag is frozen. A behaviour-changing default in a
 patch release is announced at the top of its notes rather than discovered from
 a bill.
 
-## [0.1.0] — 2026-09-19
+## [0.1.0] — 2026-09-21
 
-First release of the rewritten scraper. The previous, unreleased version is
-kept in `legacy/` for reference; everything below is a difference from it,
-with the measurement that justified the change.
+First release of the rewritten scraper. Everything below is a difference
+from the previous, unreleased version of this code, with the measurement
+that justified the change.
 
 ### Added
 
