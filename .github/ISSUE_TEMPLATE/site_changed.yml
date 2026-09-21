@@ -1,0 +1,63 @@
+name: Site changed / selectors broke
+description: Flippa changed something and the parser no longer matches.
+labels: ["site-change"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most common way a scraper stops working, and it is worth its
+        own report because the fix is different from a code bug: something on
+        flippa.com moved.
+
+        Useful to know before filing: the parser reads **Flippa's own embedded
+        listing JSON first** (`const STATE = {...}` in the served HTML) and
+        falls back to the **rendered cards** (`<div id="listing-NNN">`). The
+        `price_source` column on every row says which one produced it —
+        `state`/`state+dom` for the JSON, `dom` for the cards — so a run's own
+        output narrows the fix before you look at anything.
+
+  - type: dropdown
+    id: what_broke
+    attributes:
+      label: What stopped matching
+      options:
+        - Listings (0 rows on a page that visibly has listings)
+        - A specific field is null or wrong (price, profit, country, multiple)
+        - Pagination stops early, repeats a page, or the run reports
+          "pagination_not_addressable"
+        - The captcha detector finds nothing on a page that has one
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: URL
+      description: The exact listing URL you ran.
+      placeholder: "https://flippa.com/search?filter%5Bproperty_type%5D=saas"
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence from the page
+      description: |
+        Whichever of these you can get. A capture beats a description.
+
+        - Run with `--dump-html dump.html`, then:
+          `python3 -c "import product_parser as p; s=p.parse_state(open('dump.html').read()); print(bool(s), len(p.state_results(s)), p.state_total_results(s))"`
+          — that is (JSON found?, records, the site's own match count).
+        - Or paste one record of `STATE.results` from devtools.
+        - For a field problem: the value you got, and the value on the page.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: >-
+        Whether it reproduces on a second engine, and when it last worked.
