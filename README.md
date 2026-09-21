@@ -19,7 +19,8 @@ single-site scrapers.
 
 **Status: live-verified on 2026-09-19 and 2026-09-21.** Playwright, pyppeteer
 and Selenium each ran against `?filter[property_type]=saas` and returned
-byte-identical data — 75 listings across 3 pages, about 10 seconds, exit 0.
+byte-identical data — 75 listings across 3 pages, about 10 seconds, exit 0 —
+and so did the same engine driving 2Captcha's Scraping Browser over CDP.
 The daily canary passed on its first manual dispatch **from a bare GitHub
 runner**: no proxy, no key, a datacentre address, 75 listings and
 `status: complete`. 327 offline checks, no network required.
@@ -123,6 +124,7 @@ browser and its own proxy exit, and only after that check has passed.
 | `puppeteer_scraper.py` | pyppeteer | 50 listings / 2 pages, identical data. Needs `PYPPETEER_EXECUTABLE_PATH` on modern macOS — its bundled Chromium is from 2018 |
 | `selenium_scraper.py` | Selenium + Chrome | 50 listings / 2 pages, identical data. Two page-1 loads timed out at 60s first and the retry carried it |
 | `scraper_api_client.py` | 2Captcha Scraper API (no local browser) | 50 listings / 2 pages, identical data. Two billable tasks at $0.0005 each |
+| any of the three, with `--cdp-endpoint` | 2Captcha Scraping Browser API | 75 listings / 3 pages, identical data. `Captcha.setAutoSolve` enabled on connect; `--concurrency` refused, one live connection per profile |
 
 All three browser engines produced **byte-identical rows** (`scraped_at`
 aside) for the same 50 listings. They share the parser, the page-state
@@ -187,13 +189,12 @@ each line says whether it was run against the live API on 2026-09-19:
 * **The Scraping Browser API** (`--cdp-endpoint`) — no browser infrastructure
   of your own, a consistent device identity, a chosen exit country, and
   `Captcha.setAutoSolve`, which clears a challenge inside the browser before
-  this code gets a turn. **Not verified**, and the reason is worth stating
-  precisely: the endpoint used here was ASSEMBLED BY HAND from the documented
-  URL shape, and it answered `401 deny_no_user`. 2Captcha's own documentation
-  says not to do that — the CDP URL is copied ready-made from the Browser API
-  dashboard, where a demo account with a `Default` profile exists from the
-  first visit. So the 401 says the hand-built URL was wrong; it does NOT
-  establish that the account lacks the product.
+  this code gets a turn. **Verified:** 75 listings across 3 pages, identical
+  to the local-browser run bar three rows' `position`, with auto-solve
+  enabled on connect and `--concurrency` correctly refused (one live
+  connection per profile). Copy the CDP URL from the Browser API dashboard —
+  a URL assembled by hand from the documented shape answers
+  `401 deny_no_user`, which is how this was learned.
 * **Fingerprints** (`--fingerprint`) — a device identity for a browser you
   launched yourself. **Not verified:** the same key answered **HTTP 403** at
   `/fingerprint/random`; fingerprints are a separate subscription. Rather than

@@ -115,11 +115,13 @@ with the measurement that justified the change.
   workflow's own comment stands; it simply did not bite here.
 - The Fingerprint API answered `403` for the key used here — a separate
   subscription — so that path remains unverified rather than assumed.
-- The Scraping Browser API answered `401 deny_no_user`, but to an endpoint
-  assembled by hand from the documented URL shape. The vendor's own docs say
-  the CDP URL is copied ready-made from the Browser API dashboard, so that
-  401 is evidence about the URL, not about the account. Unverified either
-  way, and recorded as such.
+- The Scraping Browser API, over a CDP URL copied from the Browser API
+  dashboard: 75 listings across 3 pages, `Captcha.setAutoSolve` enabled on
+  connect, `--concurrency` refused with the profile-lock reason, and data
+  identical to the local-browser run bar three rows' `position`. An endpoint
+  assembled BY HAND from the documented URL shape answers `401 deny_no_user`
+  — the URL is copied, not built, and that 401 said nothing about the
+  account.
 
 ### Removed
 
