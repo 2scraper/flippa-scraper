@@ -113,9 +113,13 @@ with the measurement that justified the change.
   from a bare GitHub runner — a datacentre address with no proxy and no key —
   and every threshold in its sanity check met. The runner-IP caveat in the
   workflow's own comment stands; it simply did not bite here.
-- The Scraping Browser API answered `401 deny_no_user` and the Fingerprint API
-  answered `403` for the key used here — both are separate subscriptions, and
-  both paths therefore remain unverified rather than assumed.
+- The Fingerprint API answered `403` for the key used here — a separate
+  subscription — so that path remains unverified rather than assumed.
+- The Scraping Browser API answered `401 deny_no_user`, but to an endpoint
+  assembled by hand from the documented URL shape. The vendor's own docs say
+  the CDP URL is copied ready-made from the Browser API dashboard, so that
+  401 is evidence about the URL, not about the account. Unverified either
+  way, and recorded as such.
 
 ### Removed
 

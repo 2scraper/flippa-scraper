@@ -187,8 +187,13 @@ each line says whether it was run against the live API on 2026-09-19:
 * **The Scraping Browser API** (`--cdp-endpoint`) — no browser infrastructure
   of your own, a consistent device identity, a chosen exit country, and
   `Captcha.setAutoSolve`, which clears a challenge inside the browser before
-  this code gets a turn. **Not verified:** the key available here has no
-  Scraping Browser zone and the endpoint answered `401 deny_no_user`.
+  this code gets a turn. **Not verified**, and the reason is worth stating
+  precisely: the endpoint used here was ASSEMBLED BY HAND from the documented
+  URL shape, and it answered `401 deny_no_user`. 2Captcha's own documentation
+  says not to do that — the CDP URL is copied ready-made from the Browser API
+  dashboard, where a demo account with a `Default` profile exists from the
+  first visit. So the 401 says the hand-built URL was wrong; it does NOT
+  establish that the account lacks the product.
 * **Fingerprints** (`--fingerprint`) — a device identity for a browser you
   launched yourself. **Not verified:** the same key answered **HTTP 403** at
   `/fingerprint/random`; fingerprints are a separate subscription. Rather than
