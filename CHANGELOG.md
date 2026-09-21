@@ -34,7 +34,7 @@ that justified the change.
 - **`--concurrency N`**, where each worker owns its browser and its own proxy
   exit, dispatch stops at the end of the listing, and unattempted pages are
   reported rather than counted as failed.
-- **A 242-check offline suite** and `.github/ci_checks.py`, invoked from both
+- **A 327-check offline suite** and `.github/ci_checks.py`, invoked from both
   CI and the suite, plus a daily 3-page canary.
 - `page` and `position` columns, with the pair asserted unique across a
   multi-page run.
