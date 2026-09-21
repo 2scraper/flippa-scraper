@@ -17,10 +17,12 @@ Four engines, one parser, JSON and CSV out.
 Part of the [2scraper](https://github.com/2scraper) family of open-source,
 single-site scrapers.
 
-**Status: live-verified on 2026-09-19.** Playwright, pyppeteer and Selenium
-each ran against `?filter[property_type]=saas` and returned identical data;
-the Playwright run took 75 listings across 3 pages in about 10 seconds and
-exited 0. 327 offline checks, no network required.
+**Status: live-verified on 2026-09-19 and 2026-09-21.** Playwright, pyppeteer
+and Selenium each ran against `?filter[property_type]=saas` and returned
+byte-identical data — 75 listings across 3 pages, about 10 seconds, exit 0.
+The daily canary passed on its first manual dispatch **from a bare GitHub
+runner**: no proxy, no key, a datacentre address, 75 listings and
+`status: complete`. 327 offline checks, no network required.
 
 ## What it extracts
 

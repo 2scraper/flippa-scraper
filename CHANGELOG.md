@@ -109,6 +109,10 @@ with the measurement that justified the change.
   column matching the browser engines' except `price_source`.
 - Proxies: a 2-page run through `eu.proxy.2captcha.com:2334`, 50 listings,
   credentials never in argv.
+- The canary, dispatched by hand on 2026-09-21: 75 listings across 3 pages
+  from a bare GitHub runner — a datacentre address with no proxy and no key —
+  and every threshold in its sanity check met. The runner-IP caveat in the
+  workflow's own comment stands; it simply did not bite here.
 - The Scraping Browser API answered `401 deny_no_user` and the Fingerprint API
   answered `403` for the key used here — both are separate subscriptions, and
   both paths therefore remain unverified rather than assumed.
