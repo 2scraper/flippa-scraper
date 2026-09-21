@@ -236,9 +236,15 @@ measurements. The four that cost the most time:
 * **A zero-match query still returns five listings.** They are promoted
   placements next to `totalResults: 0`, and reporting them would be five
   fabricated rows.
-* **`<captcha-widgets>` is on every page.** It is a mount point, empty on a
-  listing page and filled on `/signup`. Treating the bare element as a marker
-  would report every run as challenged.
+* **`<captcha-widgets>` is not Flippa's.** Captures taken through the
+  Scraping Browser carry an empty `<captcha-widgets>` on every page, and it
+  reads like the site's own captcha mount. It is the 2Captcha autosolver
+  EXTENSION's markup: loading the same pages in a plain Chromium with no
+  extensions (2026-09-21) finds zero occurrences. What the site actually
+  ships is Cloudflare's own `<div class="cf-turnstile" data-sitekey="…">`,
+  on `/signup` and not on listing pages. Detecting a FILLED mount is still
+  useful — it means the extension found a challenge — and treating the bare
+  element as a marker would report every run as challenged.
 * **Solving a FORM's captcha buys nothing here.** A token in a form field is
   spent at submit time, and this scraper never submits anything. A reload
   after injecting would throw it away, so a page that was not blocked is no

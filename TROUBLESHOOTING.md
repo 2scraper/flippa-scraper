@@ -122,9 +122,12 @@ detector:
 * **The Scraping Browser's own extension injects captcha markup into every
   page it loads**, including `data-ts-input="cf-turnstile-response"`. Every
   detector in this repo strips `chrome-extension://` script tags first.
-* **Flippa ships an empty `<captcha-widgets>` element on every page.** It is a
-  mount point, not a challenge: on `/signup` it holds a real Turnstile widget,
-  on a listing page it is empty. The detector asks whether it has CONTENT.
+* **The empty `<captcha-widgets>` element is the autosolver extension's, not
+  Flippa's.** It appears on every page loaded through the Scraping Browser
+  and on none loaded by a plain Chromium — checked 2026-09-21. The detector
+  asks whether it has CONTENT rather than whether it exists, so an empty one
+  cannot report a challenge; a filled one means the EXTENSION found
+  something, which is a second opinion and not evidence about the site.
 
 ## `--fingerprint` seems to do nothing
 

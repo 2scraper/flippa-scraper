@@ -727,10 +727,19 @@ def check_captcha_detection():
     eq("no challenge is detected on a good listing page",
        captcha_solver.detect_in_html(PAGE_FIXTURE_HTML, "https://flippa.com/search"),
        None)
-    eq("the site's empty captcha mount is not a challenge",
-       captcha_solver.detect_site_captcha_mount(PAGE_FIXTURE_HTML), None)
-    check("a filled captcha mount IS reported",
-          captcha_solver.detect_site_captcha_mount(SIGNUP_FIXTURE_HTML) is not None)
+    # The empty <captcha-widgets> in the listing fixture is the AUTOSOLVER
+    # EXTENSION's, not the site's — verified 2026-09-21 by loading the same
+    # pages in a plain Chromium with no extensions, where the element does
+    # not exist at all. Detecting it is still worth it (a filled one means
+    # the extension found a challenge); reading it as the site's markup is
+    # not, and the fixtures say which is which.
+    eq("an empty autosolver mount is not a challenge",
+       captcha_solver.detect_autosolver_mount(PAGE_FIXTURE_HTML), None)
+    check("a filled autosolver mount IS reported",
+          captcha_solver.detect_autosolver_mount(SIGNUP_FIXTURE_HTML) is not None)
+    check("and the site's OWN widget is what the detector keys on: the "
+          "signup fixture carries a cf-turnstile div with a sitekey",
+          'class="cf-turnstile"' in SIGNUP_FIXTURE_HTML)
 
     signup = captcha_solver.detect_in_html(SIGNUP_FIXTURE_HTML,
                                            "https://flippa.com/signup")

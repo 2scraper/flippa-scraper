@@ -7,17 +7,21 @@ site-shaped part: what a challenge looks like ON THIS SITE.
 What flippa.com actually does (this family's question is "is one CONFIGURED,
 and would we recognise it if it appeared?", not "did we meet one"):
 
-  * Every page carries an EMPTY `<captcha-widgets></captcha-widgets>` mount
-    point. On a listing page it stays empty — measured on the 2026-08-27
-    browser capture, where the element is present and has no children.
-  * On `/signup` the same element holds a real widget:
-        <captcha-widgets>
-          <captcha-widget data-captcha-type="turnstile"
-                          data-sitekey="0x4AAA…" data-loaded="true">
-        </captcha-widgets>
-    plus Cloudflare's own `<div class="cf-turnstile" data-sitekey="0x4AAA…">`.
-    So the site is wired for **Cloudflare Turnstile**, and it renders it on
-    account-facing forms rather than to a visitor reading listings.
+  * `/signup` carries a real Cloudflare Turnstile widget — Cloudflare's own
+    `<div class="cf-turnstile" data-sitekey="0x4AAA…">` — while a listing
+    page carries none. Verified 2026-09-21 in a plain Chromium with NO
+    extensions loaded: the signup page has `cf-turnstile` and a sitekey, the
+    listing pages have neither. So the site is wired for Turnstile and
+    renders it on account-facing forms, not to a visitor reading listings.
+  * **`<captcha-widgets>` is NOT the site's.** Both this repo's captures and
+    mediamarkt-style captures taken through the Scraping Browser contain
+    `<captcha-widgets><captcha-widget data-captcha-type="…" data-widget-id="…">`,
+    and it is tempting to read that as the site's own mount point. It is the
+    2Captcha AUTOSOLVER EXTENSION's markup: the same plain-Chromium check
+    finds zero occurrences on the very pages where a capture through the
+    Scraping Browser shows it, on this site and on another one checked the
+    same way. It is still worth detecting — a filled one means the extension
+    found a challenge — but it says nothing about what the site ships.
   * No reCAPTCHA, hCaptcha, DataDome or PerimeterX markup appears on any
     capture. reCAPTCHA support is kept anyway — detection stays broad by
     decision, different geos surface different challenges, and
@@ -26,9 +30,10 @@ and would we recognise it if it appeared?", not "did we meet one"):
 Two rules follow from that, and both are load-bearing:
 
   * **The bare tag is not a marker.** `<captcha-widgets>` is on every good
-    page, so matching the substring would report every run as challenged —
-    the mistake this family's template documents twice. `detect_site_captcha_mount`
-    asks whether the mount has CONTENT, which is a function, not a substring.
+    page loaded through the Scraping Browser, so matching the substring
+    would report every run as challenged — the mistake this family's
+    template documents twice. `detect_autosolver_mount` asks whether the
+    mount has CONTENT, which is a function, not a substring.
   * **Extension-injected markup is not the site's.** The 2Captcha Scraping
     Browser's auto-solve extension injects hunters carrying
     `data-ts-input="cf-turnstile-response"` into every page it loads; the
@@ -123,13 +128,16 @@ _MOUNT_RE = re.compile(r"<captcha-widgets\b[^>]*>(.*?)</captcha-widgets>",
                        re.IGNORECASE | re.DOTALL)
 
 
-def detect_site_captcha_mount(html: str) -> Optional[str]:
-    """The contents of Flippa's own `<captcha-widgets>` mount, if it has any.
+def detect_autosolver_mount(html: str) -> Optional[str]:
+    """The contents of the autosolver extension's `<captcha-widgets>`, if any.
 
-    A FUNCTION rather than a substring, because the element itself is on every
-    page the site serves — see the module docstring. Returns None both when
-    the element is absent and when it is empty; returns the inner markup when
-    the site has actually rendered a widget into it.
+    A FUNCTION rather than a substring, because the EMPTY element appears on
+    every page loaded through the Scraping Browser, and matching the bare tag
+    would report every run as challenged. Returns None both when the element
+    is absent and when it is empty; returns the inner markup when the
+    extension has actually rendered a widget into it, which means IT found a
+    challenge — a useful second opinion, and not evidence about the site's
+    own markup. See the module docstring for how that was established.
     """
     match = _MOUNT_RE.search(strip_extension_scripts(html))
     if not match:
@@ -156,7 +164,7 @@ def detect_turnstile(html: str, page_url: str = "") -> Optional[CaptchaChallenge
     if "turnstile" not in cleaned.lower():
         return None
 
-    mount = detect_site_captcha_mount(cleaned) or ""
+    mount = detect_autosolver_mount(cleaned) or ""
     for pattern in (
             r'class=["\'][^"\']*cf-turnstile[^"\']*["\'][^>]*data-sitekey=["\'](' + _TURNSTILE_KEY_RE + r')["\']',
             r'data-sitekey=["\'](' + _TURNSTILE_KEY_RE + r')["\'][^>]*class=["\'][^"\']*cf-turnstile',
