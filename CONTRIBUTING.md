@@ -13,8 +13,18 @@ pip install -r requirements.txt
 python3 smoke_test.py
 ```
 
-It prints its own check count (327 at the time of writing), and lists any
-group it had to skip because an engine library is absent.
+It prints its own `passed / failed / skipped` counts, and lists both the
+individual checks it had to skip and any group skipped because an engine
+library is absent. A check whose input is missing must call `skip()`, never
+`check(label, True)` — a skip asserted as a pass is indistinguishable in the
+output from a check that actually ran, and it inflates the count the README
+used to quote.
+
+Some checks read `captures/`, which is not in the repository (it holds
+multi-megabyte page dumps). Without it those checks report `SKIP`, which is
+the honest result; record your own capture with
+`--dump-html captures/live_search_page1_$(date +%F).html` if you are working
+on the parser.
 
 **The suite must pass with no engine installed at all.** CI installs only
 `beautifulsoup4` and `requests`, so any import of `playwright_scraper`,
