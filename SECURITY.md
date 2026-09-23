@@ -79,9 +79,10 @@ Not because these do not matter, but because they belong somewhere else:
 
 ## Supported versions
 
-`main` only. This project has no releases or version tags; fixes land on `main`
-and you update by pulling. If you are running an old clone, update before
-reporting.
+`main` only. Releases are tagged (`v0.1.0` onwards) so a run can be pinned,
+but fixes land on `main` and that is the branch that receives them; a tag is a
+snapshot, not a maintenance branch. If you are running an old clone, update
+before reporting.
 
 ## If you have leaked a key
 

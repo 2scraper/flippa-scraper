@@ -7,6 +7,89 @@ means fixes, not that every flag is frozen. A behaviour-changing default in a
 patch release is announced at the top of its notes rather than discovered from
 a bill.
 
+## [Unreleased]
+
+Data-integrity fixes from a second review of the 2026-09-21 external audit.
+Every item below is a case where a run could exit 0 with `status: complete`
+while the output was short of what it claimed.
+
+### Fixed
+
+- **A worker that died took its page with it.** In
+  `_fetch_pages_concurrently` the page was already off the queue when the
+  fetch raised, and the `except` sat outside the loop: the page appeared in
+  no list at all — not in the results, not in `unattempted`, not in
+  `pages_failed` — and the run reported `complete`. Each queue item now has
+  its own handler, and a reconciliation pass at the end manufactures a failed
+  outcome for any requested page that is in none of the three lists. The
+  existing test asserted `check("...does not hang the run", True)`, which
+  could not fail; it now asserts that page 4 comes back as a lost page.
+- **`complete` no longer rests on the stop reason alone.** `finish_run`
+  compares pages completed against pages requested for every engine, so an
+  engine that loses a page without noticing still cannot publish a
+  complete-looking run. Shared, because the previous check lived in no engine
+  at all.
+- **A page that carried listings and parsed to nothing was read as the end of
+  the listing.** `page_flow` only returns `CONTENT` when it has counted
+  records in the page's own JSON or cards in the DOM, so zero parsed rows
+  there is a parser or schema failure. It is now `content_unparsed`, which is
+  not a complete stop reason, instead of `listing_exhausted`, which is.
+- **One empty page stopped dispatch for pages below it.** Workers do not
+  finish in page order, so a page that came back empty could stop the run
+  while lower-numbered pages were still queued — and those hold rows. The
+  page that ended dispatch is now reported, and unattempted pages below it
+  are a gap (`pages_unattempted`), not an exhausted listing.
+- **`--retries 0` reported the site as blocking us without sending a
+  request.** The attempt loop was `range(1, retries + 1)`, so zero attempts
+  meant no navigation at all, a blank tab classified as an interstitial, exit
+  3, and a burnt proxy rotation. `--pages`, `--retries`, `--concurrency` and
+  `--timeout` now refuse values below 1, delays refuse negatives, and `--url`
+  must be http(s) — including when it arrives from `.env`.
+- **A scraped title could be a spreadsheet formula.** Every text column is
+  written by whoever listed the business, and this project tells people to
+  open the CSV in Excel. Leading `=`, `+`, `-`, `@`, tab and CR in string
+  values are now neutralised; numeric columns keep their type and their sign,
+  because `monthly_profit` is legitimately negative.
+- **Output was written straight to its final path.** JSON, CSV and the
+  metadata sidecar now go through a temporary file in the same directory with
+  `fsync` and `os.replace`, so a crash or a full disk cannot leave a
+  truncated file where the last good result was.
+
+### Added
+
+- **`coverage` in `<out>.meta.json`**, beside `status`. `status` says whether
+  the run got the pages it went for; `coverage` (`exhaustive` / `window`)
+  says whether those pages were the whole listing. A `--pages 3` run of a
+  27-page listing is complete and a window, and `diff_runs.py` now labels the
+  added/removed halves of such a comparison as entered-window / left-window
+  and keeps them out of `--fail-on-change`. Price changes on SKUs both runs
+  hold stay comparable either way.
+- **`catalog_mutated`, `total_results_first` / `_last`, `rows_before_dedupe`,
+  `duplicate_skus_across_pages`, `pages_missing`** in the sidecar. Offset
+  pagination over a catalogue being edited mid-run repeats a listing when one
+  is inserted ahead of the cursor and *steps over* one when it is deleted.
+  Only the first leaves a duplicate, so the duplicate count is recorded
+  rather than gated on — failing a run on it would turn every insertion into
+  a false partial — and the deletion case is caught by Flippa's own
+  `total_results` moving between the first page and the last. Measured on
+  2026-09-22: two plain HTTP fetches seconds apart returned 672 then 671
+  results with zero overlapping SKUs.
+- **`cli_types.py`**, one set of argparse bounds shared by all four CLIs.
+- **`output_writer.merge_pages` and `failure_stop_reason`**, replacing four
+  copies each of the page-merge loop and the failure-to-stop-reason ternary.
+- Regression coverage for all of the above, plus the first tests
+  `diff_runs.py` has ever had.
+
+### Changed
+
+- `smoke_test.py` reports skips as `SKIP` with their reason and counts them
+  separately. A check whose fixture is absent used to be asserted as a pass.
+- `captures/` and `legacy/` are excluded in `.gitignore` rather than only in
+  the local, never-cloned `.git/info/exclude`.
+- The README no longer promises a fixed "327 offline checks"; the count
+  depends on which optional engines are installed.
+- `SECURITY.md` no longer claims the project has no releases or tags.
+
 ## [0.1.0] — 2026-09-21
 
 First release of the rewritten scraper. Everything below is a difference

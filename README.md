@@ -23,7 +23,7 @@ byte-identical data — 75 listings across 3 pages, about 10 seconds, exit 0 —
 and so did the same engine driving 2Captcha's Scraping Browser over CDP.
 The daily canary passed on its first manual dispatch **from a bare GitHub
 runner**: no proxy, no key, a datacentre address, 75 listings and
-`status: complete`. 327 offline checks, no network required.
+`status: complete`. The offline suite needs no network; how many checks it runs depends on which optional engines are installed, and it prints the count with any skips beside it rather than promising a fixed number.
 
 ## What it extracts
 
@@ -216,11 +216,31 @@ same situation.
 | 5 | the remote API failed (`scraper_api_client.py`) |
 | 6 | partial: some pages were gathered, then the run stopped early |
 
-Every run that writes output also writes `<out>.meta.json` with `status`,
-`stop_reason`, **which** pages failed by number, the site's own
-`total_results`, and whether pagination was addressable. `diff_runs.py`
-refuses to compare two runs that are not both `complete`, because a partial
-run's un-fetched pages otherwise read as listings that were sold.
+Every run that writes output also writes `<out>.meta.json`. Two fields there
+answer two different questions, and conflating them is how a short run gets
+read as a whole catalogue:
+
+| Field | Question it answers |
+|---|---|
+| `status` | did the run get the pages it went for? `complete`, `partial`, `failed` |
+| `coverage` | were those pages the whole listing? `exhaustive`, `window`, or null for a run that did not finish |
+
+A `--pages 3` run of a 27-page listing is `complete` **and** a `window`: every
+listing past page 3 exists and was never looked at. `diff_runs.py` refuses
+outright to compare runs that are not both `complete`, and for `window` runs
+it still compares prices but labels the added/removed halves as
+entered-window / left-window, keeping them out of `--fail-on-change`.
+
+The sidecar also carries **which** pages failed by number, `pages_missing`
+for pages that were requested and never came back at all, the site's own
+`total_results` as of the first and the last page with `catalog_mutated` when
+those differ, `rows_before_dedupe` and `duplicate_skus_across_pages`, and
+whether pagination was addressable.
+
+A run is `complete` only when its stop reason says so **and** every requested
+page is accounted for. The page count is checked independently of the stop
+reason: an engine that loses a page without noticing still cannot publish a
+complete-looking run.
 
 ## Traps that look like bugs
 
@@ -276,11 +296,18 @@ that limitation rather than half-guarding it.
 ## Testing
 
 ```bash
-python3 smoke_test.py      # 327 checks, no network, ~2s
+python3 smoke_test.py      # no network, ~2s; prints passed/failed/skipped
 pytest -q                  # the same run, through the pytest entry point
 ```
 
-The suite asserts values on real captures rather than coverage, checks that
+A check whose input is missing is reported as `SKIP` and counted separately —
+never asserted as a pass, which would inflate the total with checks that never
+ran. The suite asserts values on real captures rather than coverage, checks
+that no requested page can go missing without the run reporting itself
+partial, that a page classified as carrying listings but parsing to nothing is
+a parse failure rather than the end of the listing, that a scraped title
+cannot become a spreadsheet formula, that output files are published
+atomically, that
 both parse paths agree, that every engine exposes the same flags, that each
 engine imports its driver at module level, that every call into a shared
 module binds against its real signature, that no name is used undefined, that

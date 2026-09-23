@@ -28,3 +28,11 @@ env/
 .env
 *.key
 secrets*
+
+# Local-only working directories, announced here rather than hidden in
+# .git/info/exclude — that file is not cloned, so every fresh checkout used to
+# start with no rule against committing these.
+#   captures/  multi-megabyte page dumps the fixtures were cut from
+#   legacy/    the superseded first version of this scraper, kept for reference
+captures/
+legacy/
