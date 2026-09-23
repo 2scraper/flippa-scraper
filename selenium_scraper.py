@@ -51,12 +51,13 @@ from selenium.common.exceptions import (TimeoutException, WebDriverException)
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
+import cli_types
 import env_config
 import page_flow
 from captcha_solver import (CAPTCHA_DISCOVERY_JS, INJECT_TOKEN_BODY,
                             challenge_from_discovery, detect_in_html,
                             reconcile_detections, solve)
-from output_writer import dedupe_by_sku, finish_run
+from output_writer import failure_stop_reason, finish_run, merge_pages
 from product_parser import (SELECTORS, category_from_url, locale_from_url,
                             page_url, parse_products)
 from proxy_pool import (ROTATE_MODES, ProxyError, check_exit_or_raise,
@@ -84,10 +85,15 @@ class PageOutcome:
     products: List = field(default_factory=list)
     state: Optional[page_flow.PageState] = None
     load_failed: bool = False
+    # Classified as carrying listings, yet nothing parsed out of it — a
+    # parser/schema problem, never the end of the listing. See the twins.
+    parse_failed: bool = False
+    lost: bool = False
 
     @property
     def ok(self) -> bool:
-        return not self.load_failed and self.state is not None and \
+        return not self.load_failed and not self.parse_failed and \
+            not self.lost and self.state is not None and \
             not self.state.policy.blocked
 
     @property
@@ -364,6 +370,13 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         logger.warning("%s.", short)
     if not products:
         _dump_debug(session.driver, args, page_num, html)
+        # page_flow returns EMPTY or EXHAUSTED for the real end of a listing,
+        # and both returned earlier. Getting here means the page HAD listing
+        # data this code could not read.
+        outcome.parse_failed = True
+        logger.error("0 listings parsed from a page classified as %s (%s) — "
+                     "that is a parse failure, not the end of the listing.",
+                     state.state, state.reason)
     outcome.products = products
     return outcome
 
@@ -406,8 +419,7 @@ def scrape(args) -> int:
             total_results = first.state.total_results
 
         if not first.ok:
-            stop_reason = ("page_load_timeout" if first.load_failed
-                           else f"blocked_{(first.state.vendor if first.state else 'unknown')}")
+            stop_reason = failure_stop_reason(first)
             blocked = bool(first.state and first.state.policy.blocked)
         elif first.complete_here:
             stop_reason = ("no_results" if first.state.state == page_flow.EMPTY
@@ -424,8 +436,7 @@ def scrape(args) -> int:
                                           page_url(args.url, page_num))
                 outcomes.append(outcome)
                 if not outcome.ok:
-                    stop_reason = ("page_load_timeout" if outcome.load_failed
-                                   else f"blocked_{(outcome.state.vendor if outcome.state else 'unknown')}")
+                    stop_reason = failure_stop_reason(outcome)
                     blocked = bool(outcome.state and outcome.state.policy.blocked)
                     break
                 if outcome.complete_here or not outcome.products:
@@ -454,24 +465,28 @@ def scrape(args) -> int:
     finally:
         session.close()
 
-    all_products = []
-    merged_seen = set()
-    for oc in sorted(outcomes, key=lambda o: o.page_num):
-        fresh = dedupe_by_sku(oc.products, merged_seen)
-        if len(fresh) < len(oc.products):
-            logger.info("Page %d: dropped %d listing(s) already seen earlier.",
-                        oc.page_num, len(oc.products) - len(fresh))
-        all_products.extend(fresh)
+    all_products, merge_stats = merge_pages(
+        (o.page_num, o.products) for o in outcomes)
+    if merge_stats.duplicate_skus_across_pages:
+        logger.info("Dropped %d listing(s) already seen on an earlier page "
+                    "(page(s) %s).", merge_stats.duplicate_skus_across_pages,
+                    ", ".join(str(n) for n in merge_stats.duplicate_pages))
 
     ok_pages = [o for o in outcomes if o.ok]
     failed_pages = [o.page_num for o in outcomes if not o.ok]
+    counted = [o.state.total_results
+               for o in sorted(outcomes, key=lambda o: o.page_num)
+               if o.state is not None and o.state.total_results is not None]
     final_url = (max(ok_pages, key=lambda o: o.page_num).final_url
                  if ok_pages else args.url)
     return finish_run(all_products, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,
                       pages_requested=args.pages, pages_completed=len(ok_pages),
                       pages_failed=failed_pages, total_results=total_results,
-                      addressable=addressable,
+                      addressable=addressable, merge_stats=merge_stats,
+                      pages_missing=[o.page_num for o in outcomes if o.lost],
+                      total_results_first=counted[0] if counted else None,
+                      total_results_last=counted[-1] if counted else None,
                       start_url=args.url, final_url=final_url)
 
 
@@ -483,15 +498,15 @@ def parse_args():
                         "Required unless FLIPPA_URL is set.")
     p.add_argument("--category", default=None,
                    help="Label to tag output rows with. Defaults to what the URL says.")
-    p.add_argument("--pages", type=int, default=1, help="Number of pages to fetch")
-    p.add_argument("--delay", type=float, default=2.0, help="Delay between pages, seconds")
-    p.add_argument("--concurrency", type=int, default=1, metavar="N",
+    p.add_argument("--pages", type=cli_types.positive_int, default=1, help="Number of pages to fetch")
+    p.add_argument("--delay", type=cli_types.non_negative_float, default=2.0, help="Delay between pages, seconds")
+    p.add_argument("--concurrency", type=cli_types.positive_int, default=1, metavar="N",
                    help="Accepted for parity with the flag contract, but this "
                         "engine fetches one page at a time; N>1 warns and is "
                         "ignored. Use playwright_scraper.py for concurrency.")
-    p.add_argument("--retries", type=int, default=3,
+    p.add_argument("--retries", type=cli_types.positive_int, default=3,
                    help="Attempts per page load before giving up (default 3)")
-    p.add_argument("--retry-delay", type=float, default=2.0,
+    p.add_argument("--retry-delay", type=cli_types.non_negative_float, default=2.0,
                    help="Seconds before the first page-load retry (default 2.0)")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="flippa_listings", help="Output file prefix")
@@ -504,7 +519,7 @@ def parse_args():
                    help="per-run (default) or per-page, relaunching the browser.")
     p.add_argument("--proxy-shuffle", action="store_true",
                    help="Shuffle the pool at startup.")
-    p.add_argument("--proxy-block-retries", type=int, default=2,
+    p.add_argument("--proxy-block-retries", type=cli_types.non_negative_int, default=2,
                    help="Retries from OTHER exits when a page comes back blocked.")
     p.add_argument("--twocaptcha-key", default=None, help="2captcha.com API key")
     p.add_argument("--captcha-api", choices=["v2", "v1"], default="v2",
@@ -537,6 +552,14 @@ def parse_args():
     if not args.url:
         p.error("no --url given, and FLIPPA_URL is not set in the environment "
                 "or in .env.")
+    # Checked after env_config, because --url may have come from .env and an
+    # unusable value there fails in exactly the same way.
+    for problem in cli_types.check_listing_url(args.url):
+        p.error(problem)
+    if not cli_types.host_is_expected(args.url):
+        logger.warning("--url points at %s, not %s: the parser reads Flippa's "
+                       "own page shape and will most likely find nothing there.",
+                       urlparse(args.url).hostname, cli_types.EXPECTED_HOST_SUFFIX)
     if args.category is None:
         args.category = category_from_url(args.url)
     locale = locale_from_url(args.url)

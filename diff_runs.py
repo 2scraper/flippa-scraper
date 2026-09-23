@@ -198,6 +198,44 @@ def _check_comparable(args) -> bool:
     return False
 
 
+def _assortment_caveats(args) -> List[str]:
+    """Reasons the added/removed halves of this diff cannot be trusted.
+
+    A `complete` run is not the same thing as a complete VIEW of the listing.
+    `status` answers "did the run get the pages it went for"; `coverage`
+    answers "were those pages the whole listing". Two three-page runs of a
+    27-page listing are both complete and both windows, and a listing that
+    merely moved from page 3 to page 4 between them is absent from the second
+    file for a reason that has nothing to do with being sold.
+
+    Price comparison on the SKUs both files hold stays valid either way, which
+    is why this annotates the diff instead of refusing it.
+    """
+    caveats = []
+    for label, path in (("--old", args.old), ("--new", args.new)):
+        _status, meta = _run_status(path)
+        if meta is None:
+            continue
+        coverage = meta.get("coverage")
+        if coverage == "window":
+            caveats.append(
+                f"{label} ({path}) covered a WINDOW, not the whole listing: "
+                f"{meta.get('pages_completed')} page(s) requested out of "
+                f"{meta.get('total_results')} result(s). Listings past that "
+                f"window were never fetched.")
+        elif coverage is None:
+            caveats.append(
+                f"{label} ({path}) was written before runs recorded their "
+                f"coverage, so whether it holds the whole listing is unknown.")
+        if meta.get("catalog_mutated"):
+            caveats.append(
+                f"{label} ({path}) ran while the catalogue was being edited "
+                f"(total_results moved from {meta.get('total_results_first')} "
+                f"to {meta.get('total_results_last')}), so a listing may have "
+                f"been stepped over between two pages.")
+    return caveats
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Diff two flippa-scraper JSON outputs by sku (the listing id).")
@@ -228,7 +266,18 @@ def main() -> int:
         return 2
 
     result = diff_products(old, new)
+    caveats = _assortment_caveats(args)
+    result["assortment_comparable"] = not caveats
+    result["assortment_caveats"] = caveats
     _print_summary(result)
+    if caveats:
+        print("[!] added/removed above are NOT sold-or-listed conclusions — "
+              "read them as entered-window / left-window:")
+        for line in caveats:
+            print(f"      {line}")
+        print("    Price and status changes on the SKUs both files hold are "
+              "unaffected. For a real assortment diff, run both sides to the "
+              "end of the listing.")
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
@@ -238,7 +287,13 @@ def main() -> int:
     # `source_changed` is deliberately NOT a reason to fail: it means our own
     # two snapshots rendered differently, not that the site changed anything.
     # Alerting on it would train whoever reads the alert to ignore it.
-    if args.fail_on_change and (result["added"] or result["removed"] or result["changed"]):
+    # added/removed only count as a change when both files are known to hold
+    # the whole listing. Alerting on a listing that simply moved to the next
+    # page is the false alarm this whole sidecar exists to prevent.
+    changes = [result["changed"]]
+    if result["assortment_comparable"]:
+        changes += [result["added"], result["removed"]]
+    if args.fail_on_change and any(changes):
         return 1
     return 0
 

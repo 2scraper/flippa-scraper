@@ -53,15 +53,17 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from playwright.sync_api import (sync_playwright, Error as PWError,
                                  TimeoutError as PWTimeout)
 
+import cli_types
 import env_config
 import page_flow
 from captcha_solver import (INJECT_TOKEN_FN, detect_in_html, detect_in_page,
                             reconcile_detections, solve)
-from output_writer import dedupe_by_sku, finish_run
+from output_writer import failure_stop_reason, finish_run, merge_pages
 from product_parser import (SELECTORS, category_from_url, locale_from_url,
                             page_url, parse_products)
 from proxy_pool import (ROTATE_MODES, ProxyError, ProxyPool,
@@ -113,10 +115,21 @@ class PageOutcome:
     products: List = field(default_factory=list)
     state: Optional[page_flow.PageState] = None
     load_failed: bool = False
+    # The page was classified as carrying listings and the parser still got
+    # nothing out of it. page_flow only returns CONTENT when it has counted
+    # records in the page's own JSON or cards in the DOM, so this is a parser
+    # or schema problem — never the end of the listing, which has its own
+    # states (EMPTY, EXHAUSTED).
+    parse_failed: bool = False
+    # The page was taken off the work queue and never came back: its worker
+    # died holding it. Recorded as an outcome so the page exists in SOME list
+    # rather than in none.
+    lost: bool = False
 
     @property
     def ok(self) -> bool:
-        return not self.load_failed and self.state is not None and \
+        return not self.load_failed and not self.parse_failed and \
+            not self.lost and self.state is not None and \
             not self.state.policy.blocked
 
     @property
@@ -500,8 +513,16 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         logger.warning("%s.", short)
     if not products:
         _dump_debug(session.page, args, page_num, html)
-        logger.warning("0 listings parsed from a page classified as %s — saved "
-                       "what the browser actually saw.", state.state)
+        # Not "the listing ended here". page_flow classifies the end of a
+        # listing as EMPTY or EXHAUSTED and both returned above; reaching this
+        # line means the page HAD listing data and this code could not read
+        # it. Treating it as the end is how a schema change becomes a
+        # successful-looking run holding half the catalogue.
+        outcome.parse_failed = True
+        logger.error("0 listings parsed from a page classified as %s (%s) — "
+                     "that is a parse failure, not the end of the listing. "
+                     "Saved what the browser actually saw.",
+                     state.state, state.reason)
     outcome.products = products
     return outcome
 
@@ -544,6 +565,9 @@ def _fetch_pages_concurrently(args, pool, specs, concurrency: int):
 
     results = []
     results_lock = threading.Lock()
+    # The page numbers that came back empty. Which one was LOWEST decides
+    # whether the pages still in the queue were skipped legitimately.
+    empty_pages = []
     # Set when a page comes back past the end of the listing. Without it,
     # asking for 50 pages of a 5-page search would fetch 45 empty ones.
     exhausted = threading.Event()
@@ -563,19 +587,39 @@ def _fetch_pages_concurrently(args, pool, specs, concurrency: int):
                         if not first:
                             time.sleep(args.delay)
                         first = False
-                        outcome = _fetch_one_page(session, args, session.pool,
-                                                  page_num, url)
+                        try:
+                            outcome = _fetch_one_page(session, args, session.pool,
+                                                      page_num, url)
+                        except Exception:  # noqa: BLE001
+                            # get_nowait already removed this page from the
+                            # queue. Letting the exception out of the loop, as
+                            # this used to, left the page in no list at all:
+                            # not in results, not in unattempted, not in
+                            # pages_failed — and a run that lost a page
+                            # reported itself complete.
+                            logger.exception(
+                                "[%s] page %d raised — recording it as a failed "
+                                "page and retiring this worker.", name, page_num)
+                            lost = PageOutcome(page_num=page_num, url=url)
+                            lost.lost = True
+                            with results_lock:
+                                results.append(lost)
+                            break
                         with results_lock:
                             results.append(outcome)
                         if outcome.ok and not outcome.products:
                             logger.info("[%s] page %d returned no listings — "
                                         "treating that as the end of the listing "
                                         "and stopping dispatch.", name, page_num)
+                            with results_lock:
+                                empty_pages.append(page_num)
                             exhausted.set()
                 finally:
                     session.close()
         except Exception:  # noqa: BLE001 — a dead worker must not hang the run
-            logger.exception("[%s] died; its pages are reported as failed.", name)
+            logger.exception("[%s] died; any page it was holding is reconciled "
+                             "into the results below, and whatever is still "
+                             "queued is reported unattempted.", name)
 
     threads = [threading.Thread(target=worker, args=(i,), name=f"page-worker-{i + 1}")
                for i in range(concurrency)]
@@ -592,7 +636,23 @@ def _fetch_pages_concurrently(args, pool, specs, concurrency: int):
             unattempted.append(work.get_nowait()[0])
         except queue.Empty:
             break
-    return results, sorted(unattempted), exhausted.is_set()
+
+    # Every page was asked for, so every page must be in exactly one of the
+    # three lists. This reconciliation is the backstop for the per-page
+    # handler above: a page that is in none of them is manufactured here as a
+    # failure rather than quietly rounding the run down to the pages that
+    # happened to survive.
+    by_page = dict(specs)
+    accounted = {o.page_num for o in results} | set(unattempted)
+    for page_num in sorted(set(by_page) - accounted):
+        logger.error("Page %d left the queue and never came back — recording it "
+                     "as a failed page.", page_num)
+        lost = PageOutcome(page_num=page_num, url=by_page[page_num])
+        lost.lost = True
+        results.append(lost)
+
+    return (results, sorted(unattempted), exhausted.is_set(),
+            min(empty_pages) if empty_pages else None)
 
 
 def _addressable(first: PageOutcome, second: PageOutcome) -> bool:
@@ -663,8 +723,7 @@ def scrape(args) -> int:
                 total_results = first.state.total_results
 
             if not first.ok:
-                stop_reason = ("page_load_timeout" if first.load_failed
-                               else f"blocked_{(first.state.vendor if first.state else 'unknown')}")
+                stop_reason = failure_stop_reason(first)
                 blocked = bool(first.state and first.state.policy.blocked)
             elif first.complete_here:
                 stop_reason = ("no_results" if first.state.state == page_flow.EMPTY
@@ -677,8 +736,7 @@ def scrape(args) -> int:
                 addressable = _addressable(first, second)
 
                 if not second.ok:
-                    stop_reason = ("page_load_timeout" if second.load_failed
-                                   else f"blocked_{(second.state.vendor if second.state else 'unknown')}")
+                    stop_reason = failure_stop_reason(second)
                     blocked = bool(second.state and second.state.policy.blocked)
                 elif second.complete_here or not second.products:
                     stop_reason = "listing_exhausted"
@@ -702,17 +760,34 @@ def scrape(args) -> int:
                         logger.info("Fetching pages 3-%d across %d workers%s.",
                                     args.pages, concurrency,
                                     f" over {len(pool)} exit(s)" if pool else "")
-                        more, unattempted, ran_out = _fetch_pages_concurrently(
-                            args, pool, specs, concurrency)
+                        more, unattempted, ran_out, empty_at = (
+                            _fetch_pages_concurrently(args, pool, specs,
+                                                      concurrency))
                         outcomes.extend(more)
                         failed = [o for o in more if not o.ok]
                         if failed:
                             worst = min(failed, key=lambda o: o.page_num)
-                            stop_reason = ("page_load_timeout" if worst.load_failed
-                                           else f"blocked_{(worst.state.vendor if worst.state else 'unknown')}")
+                            stop_reason = failure_stop_reason(worst)
                             blocked = any(o.state and o.state.policy.blocked for o in more)
                         elif ran_out:
-                            stop_reason = "listing_exhausted"
+                            # Dispatch stops the moment ANY worker reaches the
+                            # end of the listing, and workers do not finish in
+                            # page order. Pages numbered BELOW the empty one
+                            # may still have been sitting in the queue, and
+                            # those hold rows — skipping them is a gap, not an
+                            # exhausted listing.
+                            gap = [n for n in unattempted
+                                   if empty_at is None or n < empty_at]
+                            if gap:
+                                logger.error(
+                                    "Page %s came back empty and stopped "
+                                    "dispatch, but page(s) %s were never "
+                                    "fetched and come BEFORE it — this is a "
+                                    "gap, not the end of the listing.",
+                                    empty_at, ", ".join(str(n) for n in gap))
+                                stop_reason = "pages_unattempted"
+                            else:
+                                stop_reason = "listing_exhausted"
                         elif unattempted:
                             stop_reason = "pages_unattempted"
                     else:
@@ -725,8 +800,7 @@ def scrape(args) -> int:
                             outcome = _fetch_one_page(session, args, pool, page_num, url)
                             outcomes.append(outcome)
                             if not outcome.ok:
-                                stop_reason = ("page_load_timeout" if outcome.load_failed
-                                               else f"blocked_{(outcome.state.vendor if outcome.state else 'unknown')}")
+                                stop_reason = failure_stop_reason(outcome)
                                 blocked = bool(outcome.state and outcome.state.policy.blocked)
                                 break
                             if outcome.complete_here or not outcome.products:
@@ -750,25 +824,34 @@ def scrape(args) -> int:
                 session.close()
 
     # Merge once, in PAGE order — not in the order pages happened to finish.
-    all_products = []
-    merged_seen = set()
-    for oc in sorted(outcomes, key=lambda o: o.page_num):
-        fresh = dedupe_by_sku(oc.products, merged_seen)
-        if len(fresh) < len(oc.products):
-            logger.info("Page %d: dropped %d listing(s) already seen on an "
-                        "earlier page.", oc.page_num, len(oc.products) - len(fresh))
-        all_products.extend(fresh)
+    all_products, merge_stats = merge_pages(
+        (o.page_num, o.products) for o in outcomes)
+    if merge_stats.duplicate_skus_across_pages:
+        logger.info("Dropped %d listing(s) already seen on an earlier page "
+                    "(page(s) %s). Recorded in the metadata: a repeat means "
+                    "the catalogue shifted under the run.",
+                    merge_stats.duplicate_skus_across_pages,
+                    ", ".join(str(n) for n in merge_stats.duplicate_pages))
 
     ok_pages = [o for o in outcomes if o.ok]
     failed_pages = [o.page_num for o in outcomes if not o.ok]
+    missing_pages = [o.page_num for o in outcomes if o.lost]
     final_url = (max(ok_pages, key=lambda o: o.page_num).final_url
                  if ok_pages else args.url)
+    # Flippa's own match count, as of the run's first page and its last. A
+    # change between them says the catalogue was edited mid-run — the one
+    # signal that also catches a DELETION, which leaves no duplicate behind.
+    counted = [o.state.total_results for o in sorted(outcomes, key=lambda o: o.page_num)
+               if o.state is not None and o.state.total_results is not None]
 
     return finish_run(all_products, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,
                       pages_requested=args.pages, pages_completed=len(ok_pages),
                       pages_failed=failed_pages, total_results=total_results,
-                      addressable=addressable,
+                      addressable=addressable, pages_missing=missing_pages,
+                      merge_stats=merge_stats,
+                      total_results_first=counted[0] if counted else None,
+                      total_results_last=counted[-1] if counted else None,
                       start_url=args.url, final_url=final_url)
 
 
@@ -783,18 +866,18 @@ def parse_args():
                    help="Label to tag output rows with. Defaults to what the URL "
                         "itself says, so the column is never empty just because "
                         "the flag was omitted.")
-    p.add_argument("--pages", type=int, default=1, help="Number of pages to fetch")
-    p.add_argument("--delay", type=float, default=2.0, help="Delay between pages, seconds")
-    p.add_argument("--concurrency", type=int, default=1, metavar="N",
+    p.add_argument("--pages", type=cli_types.positive_int, default=1, help="Number of pages to fetch")
+    p.add_argument("--delay", type=cli_types.non_negative_float, default=2.0, help="Delay between pages, seconds")
+    p.add_argument("--concurrency", type=cli_types.positive_int, default=1, metavar="N",
                    help="Fetch pages 3..N through N parallel workers (default 1). "
                         "Each worker runs its own browser and holds its own proxy "
                         "exit. Pages 1 and 2 are always fetched alone — page 2 is "
                         "what proves the listing can be paged through by URL. "
                         "Ignored with --cdp-endpoint.")
-    p.add_argument("--retries", type=int, default=3,
+    p.add_argument("--retries", type=cli_types.positive_int, default=3,
                    help="Attempts per page load before giving up (default 3); the "
                         "pause between attempts doubles each time.")
-    p.add_argument("--retry-delay", type=float, default=2.0,
+    p.add_argument("--retry-delay", type=cli_types.non_negative_float, default=2.0,
                    help="Seconds before the first page-load retry (default 2.0)")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="flippa_listings", help="Output file prefix")
@@ -811,7 +894,7 @@ def parse_args():
     p.add_argument("--proxy-shuffle", action="store_true",
                    help="Shuffle the pool at startup, so concurrent runs do not all "
                         "begin on the first exit in the file.")
-    p.add_argument("--proxy-block-retries", type=int, default=2,
+    p.add_argument("--proxy-block-retries", type=cli_types.non_negative_int, default=2,
                    help="When a page comes back blocked, retry it from this many "
                         "OTHER exits before giving up (default 2).")
     p.add_argument("--twocaptcha-key", default=None, help="2captcha.com API key")
@@ -860,6 +943,14 @@ def parse_args():
     if not args.url:
         p.error("no --url given, and FLIPPA_URL is not set in the environment "
                 "or in .env.")
+    # Checked after env_config, because --url may have come from .env and an
+    # unusable value there fails in exactly the same way.
+    for problem in cli_types.check_listing_url(args.url):
+        p.error(problem)
+    if not cli_types.host_is_expected(args.url):
+        logger.warning("--url points at %s, not %s: the parser reads Flippa's "
+                       "own page shape and will most likely find nothing there.",
+                       urlparse(args.url).hostname, cli_types.EXPECTED_HOST_SUFFIX)
     if args.category is None:
         args.category = category_from_url(args.url)
     locale = locale_from_url(args.url)

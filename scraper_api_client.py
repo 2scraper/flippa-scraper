@@ -57,12 +57,14 @@ import os
 import sys
 import time
 from typing import List, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
 
+import cli_types
 import env_config
 import page_flow
-from output_writer import dedupe_by_sku, finish_run
+from output_writer import finish_run, merge_pages
 from product_parser import (category_from_url, locale_from_url, page_url,
                             parse_products)
 from proxy_pool import redact_secret_patterns
@@ -207,6 +209,19 @@ def _fetch_page(args, page_num: int, url: str):
     return None, []
 
 
+def _parse_failed(state, products) -> bool:
+    """Classified as carrying listings, yet nothing parsed out of it.
+
+    page_flow reports the real end of a listing as EMPTY or EXHAUSTED, both of
+    which carry policy.complete. A page that is neither of those, is not a
+    challenge, and still yields no rows is a parse or schema failure — and
+    treating it as the end of the listing is how a run holding half the
+    catalogue reports itself complete.
+    """
+    return (state is not None and not products
+            and not state.policy.complete and not state.policy.blocked)
+
+
 def scrape(args) -> int:
     outcomes: List[Tuple[int, object, list]] = []
     blocked = False
@@ -227,6 +242,11 @@ def scrape(args) -> int:
     elif state.policy.complete:
         stop_reason = ("no_results" if state.state == page_flow.EMPTY
                        else "listing_exhausted")
+    elif _parse_failed(state, products):
+        logger.error("0 listings parsed from page 1, classified as %s (%s) — "
+                     "that is a parse failure, not an empty listing.",
+                     state.state, state.reason)
+        stop_reason = "content_unparsed"
     elif args.pages > 1:
         seen = {p.sku for p in products if p.sku}
         first_products = products
@@ -240,6 +260,12 @@ def scrape(args) -> int:
             if state.policy.blocked:
                 stop_reason = f"blocked_{state.vendor}"
                 blocked = True
+                break
+            if _parse_failed(state, products):
+                logger.error("0 listings parsed from page %d, classified as %s "
+                             "(%s) — that is a parse failure, not the end of "
+                             "the listing.", page_num, state.state, state.reason)
+                stop_reason = "content_unparsed"
                 break
             if state.policy.complete or not products:
                 stop_reason = "listing_exhausted"
@@ -266,18 +292,26 @@ def scrape(args) -> int:
                 stop_reason = "no_new_listings"
                 break
 
-    all_products = []
-    merged_seen = set()
-    for page_num, _state, products in sorted(outcomes, key=lambda o: o[0]):
-        all_products.extend(dedupe_by_sku(products, merged_seen))
+    all_products, merge_stats = merge_pages(
+        (page_num, products) for page_num, _state, products in outcomes)
+    if merge_stats.duplicate_skus_across_pages:
+        logger.info("Dropped %d listing(s) already seen on an earlier page "
+                    "(page(s) %s).", merge_stats.duplicate_skus_across_pages,
+                    ", ".join(str(n) for n in merge_stats.duplicate_pages))
 
-    ok_pages = [o for o in outcomes if o[1] is not None and not o[1].policy.blocked]
-    failed = [o[0] for o in outcomes if o[1] is None or o[1].policy.blocked]
+    ok_pages = [o for o in outcomes if o[1] is not None
+                and not o[1].policy.blocked and not _parse_failed(o[1], o[2])]
+    failed = [o[0] for o in outcomes if o[1] is None or o[1].policy.blocked
+              or _parse_failed(o[1], o[2])]
+    counted = [o[1].total_results for o in sorted(outcomes, key=lambda o: o[0])
+               if o[1] is not None and o[1].total_results is not None]
     return finish_run(all_products, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,
                       pages_requested=args.pages, pages_completed=len(ok_pages),
                       pages_failed=failed, total_results=total_results,
-                      addressable=addressable,
+                      addressable=addressable, merge_stats=merge_stats,
+                      total_results_first=counted[0] if counted else None,
+                      total_results_last=counted[-1] if counted else None,
                       start_url=args.url, final_url=args.url)
 
 
@@ -293,12 +327,12 @@ def parse_args():
                    help="A flippa.com listing URL. Required unless FLIPPA_URL is set.")
     p.add_argument("--category", default=None,
                    help="Label to tag output rows with. Defaults to what the URL says.")
-    p.add_argument("--pages", type=int, default=1, help="Number of pages to fetch")
-    p.add_argument("--delay", type=float, default=1.0,
+    p.add_argument("--pages", type=cli_types.positive_int, default=1, help="Number of pages to fetch")
+    p.add_argument("--delay", type=cli_types.non_negative_float, default=1.0,
                    help="Delay between pages, seconds (default 1.0)")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="flippa_listings", help="Output file prefix")
-    p.add_argument("--timeout", type=int, default=60,
+    p.add_argument("--timeout", type=cli_types.positive_int, default=60,
                    help=f"API-side task timeout in seconds (1-{MAX_API_TIMEOUT}, default 60)")
     p.add_argument("--cdp-url", default=None,
                    help="Route the fetch through an existing browser session over "
@@ -315,10 +349,10 @@ def parse_args():
                       help="Wait for a page load state instead of specific content")
     p.add_argument("--allow-empty", action="store_true",
                    help="Write output files even when 0 listings were parsed.")
-    p.add_argument("--retries", type=int, default=1,
+    p.add_argument("--retries", type=cli_types.positive_int, default=1,
                    help="Extra attempts if a challenge page comes back. Each "
                         "attempt is a separate billable task, so this defaults to 1.")
-    p.add_argument("--retry-delay", type=int, default=10,
+    p.add_argument("--retry-delay", type=cli_types.non_negative_float, default=10,
                    help="Seconds between retries (default 10)")
     p.add_argument("--dump-html", default=None,
                    help="Also write the raw returned HTML, on success as well as failure")
@@ -333,6 +367,14 @@ def parse_args():
     if not args.url:
         p.error("no --url given, and FLIPPA_URL is not set in the environment "
                 "or in .env.")
+    # Checked after env_config, because --url may have come from .env and an
+    # unusable value there fails in exactly the same way.
+    for problem in cli_types.check_listing_url(args.url):
+        p.error(problem)
+    if not cli_types.host_is_expected(args.url):
+        logger.warning("--url points at %s, not %s: the parser reads Flippa's "
+                       "own page shape and will most likely find nothing there.",
+                       urlparse(args.url).hostname, cli_types.EXPECTED_HOST_SUFFIX)
     if args.category is None:
         args.category = category_from_url(args.url)
     locale = locale_from_url(args.url)

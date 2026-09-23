@@ -40,6 +40,7 @@ dev = ["pytest>=7.0"]
 # excluded on purpose: it is a runner invoked as a script, not a module.
 py-modules = [
     "captcha_solver",
+    "cli_types",
     "diff_runs",
     "env_config",
     "fingerprint_client",
@@ -58,6 +59,6 @@ license-files = ["LICENSE"]
 # smoke_test.py is a self-contained runner, not a pytest suite (see
 # CONTRIBUTING.md) — tests/test_smoke.py wraps it as a single pytest test so
 # `pytest` works as an entry point without maintaining two copies of the same
-# 327 checks. Scoped to tests/ so pytest does not also try, and fail, to
+# checks. Scoped to tests/ so pytest does not also try, and fail, to
 # collect the engine scripts as test modules.
 testpaths = ["tests"]

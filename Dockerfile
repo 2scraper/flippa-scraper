@@ -24,9 +24,9 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-playwright.tx
 # own check compares this list against the real import graph: every repo in
 # this family once shipped an image that died with ModuleNotFoundError on
 # every invocation, --help included, because one module was missing here.
-COPY captcha_solver.py env_config.py fingerprint_client.py output_writer.py \
-     page_flow.py playwright_scraper.py product_parser.py proxy_pool.py \
-     diff_runs.py ./
+COPY captcha_solver.py cli_types.py env_config.py fingerprint_client.py \
+     output_writer.py page_flow.py playwright_scraper.py product_parser.py \
+     proxy_pool.py diff_runs.py ./
 
 ENTRYPOINT ["python3", "playwright_scraper.py"]
 CMD ["--help"]

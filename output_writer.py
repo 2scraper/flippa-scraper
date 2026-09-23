@@ -27,9 +27,11 @@ of every run:
 
 import csv
 import json
+import os
+import tempfile
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
-from typing import Optional, List, Set
+from typing import Callable, Iterable, List, Optional, Set, Tuple
 
 SOURCE = "flippa.com"
 
@@ -107,9 +109,105 @@ def dedupe_by_sku(products: List[Product], seen: Set[str]) -> List[Product]:
     return fresh
 
 
+def _atomic_write(path: str, write: Callable) -> None:
+    """Write `path` through a temporary file in the same directory, then rename.
+
+    Writing straight to the final path means a crash, a full disk or a second
+    run against the same --out leaves a HALF-written file behind, and no
+    consumer can tell a truncated JSON from a short run. os.replace is atomic
+    within a filesystem, so a reader sees either the previous complete file or
+    the new complete one and never a mixture of the two.
+    """
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-",
+                               suffix=f"-{os.path.basename(path)}")
+    try:
+        # newline="" for the csv writer's sake; json does not care.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            write(f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+# A leading one of these makes a spreadsheet treat the cell as a formula
+# rather than as text. \t and \r are here because Excel strips them and then
+# reads what follows.
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe(value):
+    """Neutralise a spreadsheet formula in a scraped string.
+
+    Every text column in a row here is written by whoever listed the business:
+    a title of `=HYPERLINK("http://...","Click")` is an active formula the
+    moment the CSV is opened in Excel, Sheets or LibreOffice, and the CSV is
+    exactly what this project tells people to open there.
+
+    Only `str` values are touched. The numeric columns keep their type and
+    their sign — monthly_profit is legitimately negative, and prefixing a
+    number would corrupt the column to fix an injection that a number cannot
+    carry in the first place.
+    """
+    if isinstance(value, str) and value[:1] in _FORMULA_LEAD:
+        return "'" + value
+    return value
+
+
+@dataclass
+class MergeStats:
+    """What merging the pages of one run had to drop, and from where."""
+    rows_before_dedupe: int = 0
+    duplicate_skus_across_pages: int = 0
+    duplicate_pages: List[int] = field(default_factory=list)
+
+
+def merge_pages(pages: Iterable[Tuple[int, List[Product]]]
+                ) -> Tuple[List[Product], MergeStats]:
+    """Merge per-page rows in PAGE order, dropping SKUs seen on an earlier page.
+
+    Shared by every engine so the merge cannot drift between them, and it
+    returns what it dropped rather than only the survivors.
+
+    The counts are the point. Offset pagination over a catalogue that is being
+    edited underneath the run behaves in two opposite ways, and only one of
+    them is visible here:
+
+      an insertion ahead of the cursor shifts the window down, so one listing
+      arrives twice. Nothing is lost. It shows up as a duplicate, and it is
+      RECORDED rather than treated as a failure — failing on it would turn
+      every insertion into a false partial;
+
+      a deletion ahead of the cursor shifts the window up, so one listing is
+      stepped over and never fetched. It produces NO duplicate at all, which
+      is why a duplicate count can never be the detector for it. What catches
+      that one is Flippa's own total_results, compared between the run's first
+      and last page (see finish_run's `catalog_mutated`).
+    """
+    merged: List[Product] = []
+    seen: Set[str] = set()
+    stats = MergeStats()
+    for page_num, products in sorted(pages, key=lambda item: item[0]):
+        stats.rows_before_dedupe += len(products)
+        fresh = dedupe_by_sku(products, seen)
+        dropped = len(products) - len(fresh)
+        if dropped:
+            stats.duplicate_skus_across_pages += dropped
+            stats.duplicate_pages.append(page_num)
+        merged.extend(fresh)
+    return merged, stats
+
+
 def write_json(products: List[Product], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump([asdict(p) for p in products], f, ensure_ascii=False, indent=2)
+    _atomic_write(path, lambda f: json.dump(
+        [asdict(p) for p in products], f, ensure_ascii=False, indent=2))
 
 
 def write_csv(products: List[Product], path: str) -> None:
@@ -117,15 +215,18 @@ def write_csv(products: List[Product], path: str) -> None:
     # consumer fail on read (no columns to parse) instead of reading a valid
     # table with zero rows.
     if not products:
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            csv.DictWriter(f, fieldnames=list(asdict(Product()).keys())).writeheader()
+        _atomic_write(path, lambda f: csv.DictWriter(
+            f, fieldnames=list(asdict(Product()).keys())).writeheader())
         return
     fieldnames = list(asdict(products[0]).keys())
-    with open(path, "w", encoding="utf-8", newline="") as f:
+
+    def _write(f):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for p in products:
-            writer.writerow(asdict(p))
+            writer.writerow({k: csv_safe(v) for k, v in asdict(p).items()})
+
+    _atomic_write(path, _write)
 
 
 # Exit code used when a run completes but produced nothing. Distinct from 1
@@ -137,6 +238,34 @@ EXIT_NO_PRODUCTS = 4
 # search genuinely matched nothing" from "something stood between us and the
 # content". See page_flow.classify.
 EXIT_BLOCKED = 3
+
+def failure_stop_reason(outcome) -> str:
+    """Why this page yielded no data, as a `stop_reason`.
+
+    One mapping for every engine: the ternary this replaces was copied into
+    four files, and a reason added in one of them stayed missing from the
+    other three.
+    """
+    if getattr(outcome, "lost", False):
+        return "worker_lost_page"
+    if getattr(outcome, "parse_failed", False):
+        # Two different failures reach here and a reader needs to tell them
+        # apart: a page that never painted is an infrastructure problem, a
+        # page full of listings this code could not read is a schema problem.
+        # Neither is the end of the listing, which is what both used to look
+        # like.
+        # Imported here rather than at module level: page_flow reaches
+        # product_parser, which imports Product from this module, and a
+        # top-level import would close that loop.
+        import page_flow
+        state = getattr(outcome, "state", None)
+        painted = state is not None and state.state != page_flow.UNPAINTED
+        return "content_unparsed" if painted else "page_never_painted"
+    if getattr(outcome, "load_failed", False):
+        return "page_load_timeout"
+    state = getattr(outcome, "state", None)
+    return f"blocked_{(state.vendor if state else None) or 'unknown'}"
+
 
 # Exit code for a run that gathered SOME listings and then stopped early — a
 # page-load timeout, or a challenge, on page 3 of 10. The output file is still
@@ -159,8 +288,7 @@ def write_run_meta(out_prefix: str, meta: dict) -> str:
     un-fetched pages being reported as delisted listings.
     """
     path = f"{out_prefix}.meta.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+    _atomic_write(path, lambda f: json.dump(meta, f, ensure_ascii=False, indent=2))
     print(f"[+] Wrote run metadata -> {path} (status={meta.get('status')})")
     return path
 
@@ -169,7 +297,15 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
              pages_completed: int, start_url: str, final_url: str,
              products: int, pages_failed: Optional[List[int]] = None,
              total_results: Optional[int] = None,
-             addressable: Optional[bool] = None) -> dict:
+             addressable: Optional[bool] = None,
+             coverage: Optional[str] = None,
+             pages_missing: Optional[List[int]] = None,
+             rows_before_dedupe: Optional[int] = None,
+             duplicate_skus_across_pages: Optional[int] = None,
+             duplicate_pages: Optional[List[int]] = None,
+             total_results_first: Optional[int] = None,
+             total_results_last: Optional[int] = None,
+             catalog_mutated: Optional[bool] = None) -> dict:
     """Build the metadata dict for a finished run.
 
     `status` is the field a consumer branches on:
@@ -189,6 +325,33 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
     `addressable` records whether pages 2..N could be addressed by URL at all
     (see product_parser.page_url): False means the run had to chain, and that
     --concurrency was refused for this listing.
+
+    `coverage` is the OTHER half of `status`, and the two answer different
+    questions. `status` says whether the run got what it was asked for;
+    `coverage` says what it was asked for:
+
+      exhaustive — the run reached the end of the listing. Nothing exists
+                   beyond what is in this file.
+      window     — the run fetched the --pages it was given and stopped
+                   there. Listings beyond that window exist and were never
+                   looked at, so a listing absent from this file may simply
+                   be on page N+1.
+      null       — the run did not finish, so neither applies.
+
+    Conflating the two is what let a three-page run of a 27-page listing be
+    diffed as if it were the whole catalogue, reporting every listing that
+    moved to page 4 as delisted. diff_runs.py branches on `coverage`.
+
+    `pages_missing` lists pages that were requested, were not refused, and
+    never came back at all — a worker that died mid-page used to leave no
+    trace anywhere in this file.
+
+    `rows_before_dedupe` / `duplicate_skus_across_pages` / `duplicate_pages`
+    record what the merge dropped, and `catalog_mutated` says whether
+    Flippa's own total_results changed between this run's first and last
+    page. Together they are how a reader judges whether the catalogue was
+    being edited underneath the run — see merge_pages for why the duplicate
+    count alone cannot answer that.
     """
     return {
         "source": SOURCE,
@@ -200,6 +363,14 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
         "products": products,
         "total_results": total_results,
         "addressable": addressable,
+        "coverage": coverage,
+        "pages_missing": pages_missing or [],
+        "rows_before_dedupe": rows_before_dedupe,
+        "duplicate_skus_across_pages": duplicate_skus_across_pages,
+        "duplicate_pages": duplicate_pages or [],
+        "total_results_first": total_results_first,
+        "total_results_last": total_results_last,
+        "catalog_mutated": catalog_mutated,
         "start_url": start_url,
         "final_url": final_url,
         "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -245,6 +416,13 @@ def save(products: List[Product], out_prefix: str, fmt: str,
 COMPLETE_STOP_REASONS = ("completed", "listing_exhausted", "no_new_listings",
                          "no_results")
 
+# Of those, the ones that mean the run reached the END OF THE LISTING rather
+# than the end of the pages it was asked for. The distinction is what
+# `coverage` publishes, and what diff_runs.py needs: "complete" answers "did
+# the run get what it went for", which is NOT the same question as "does this
+# file hold the whole listing".
+EXHAUSTIVE_STOP_REASONS = ("listing_exhausted", "no_new_listings", "no_results")
+
 
 def finish_run(products: List[Product], out_prefix: str, fmt: str,
                allow_empty: bool, *, blocked: bool, stop_reason: str,
@@ -252,7 +430,11 @@ def finish_run(products: List[Product], out_prefix: str, fmt: str,
                start_url: str, final_url: str,
                pages_failed: Optional[List[int]] = None,
                total_results: Optional[int] = None,
-               addressable: Optional[bool] = None) -> int:
+               addressable: Optional[bool] = None,
+               pages_missing: Optional[List[int]] = None,
+               merge_stats: Optional[MergeStats] = None,
+               total_results_first: Optional[int] = None,
+               total_results_last: Optional[int] = None) -> int:
     """Write output + the run-metadata sidecar; return the exit code.
 
     Shared by all engines so the status/exit-code mapping cannot drift between
@@ -262,8 +444,39 @@ def finish_run(products: List[Product], out_prefix: str, fmt: str,
     Otherwise a failed run would leave a "status": "failed" sidecar next to
     the previous run's still-intact good output (which `save` deliberately
     does not overwrite) — the two files would contradict each other.
+
+    A run is complete only if its stop reason says so AND every requested page
+    is accounted for. The second half is not redundant: `stop_reason` only
+    ever knows about pages the engine noticed losing, and the whole shape of
+    the bug this guards against is a page disappearing with nobody noticing.
+    The page count is checked here, once, for every engine — an engine that
+    forgets to report a gap still cannot publish a complete-looking run.
     """
-    complete = stop_reason in COMPLETE_STOP_REASONS
+    missing = sorted(pages_missing or [])
+    # "completed" means the page loop ran to the end of --pages without a
+    # reason to stop early, so fewer completed pages than requested is a
+    # contradiction: some page went missing without being counted as failed.
+    unaccounted = stop_reason == "completed" and pages_completed < pages_requested
+    if missing or unaccounted:
+        print(f"[!] {pages_completed} of {pages_requested} requested page(s) came "
+              f"back and nothing in the run explains the rest"
+              + (f" — pages {', '.join(str(n) for n in missing)} were never "
+                 f"reported at all" if missing else "")
+              + ". Reporting a PARTIAL run.")
+        if stop_reason in COMPLETE_STOP_REASONS:
+            stop_reason = "pages_missing"
+
+    complete = (stop_reason in COMPLETE_STOP_REASONS
+                and not missing and not unaccounted)
+    coverage = ("exhaustive" if stop_reason in EXHAUSTIVE_STOP_REASONS else
+                "window" if stop_reason == "completed" else None)
+    catalog_mutated = (None if total_results_first is None or total_results_last is None
+                       else total_results_first != total_results_last)
+    if catalog_mutated:
+        print(f"[!] Flippa's own match count moved from {total_results_first} to "
+              f"{total_results_last} while this run was collecting: the catalogue "
+              f"was edited underneath it, so a listing may have been stepped over "
+              f"between two pages. Recorded as catalog_mutated in the metadata.")
     rc = save(products, out_prefix, fmt, allow_empty=allow_empty)
     wrote_output = bool(products) or allow_empty
 
@@ -278,7 +491,15 @@ def finish_run(products: List[Product], out_prefix: str, fmt: str,
             status=status, stop_reason=stop_reason,
             pages_requested=pages_requested, pages_completed=pages_completed,
             pages_failed=pages_failed, total_results=total_results,
-            addressable=addressable,
+            addressable=addressable, coverage=coverage, pages_missing=missing,
+            rows_before_dedupe=(merge_stats.rows_before_dedupe
+                                if merge_stats else None),
+            duplicate_skus_across_pages=(merge_stats.duplicate_skus_across_pages
+                                         if merge_stats else None),
+            duplicate_pages=(merge_stats.duplicate_pages if merge_stats else None),
+            total_results_first=total_results_first,
+            total_results_last=total_results_last,
+            catalog_mutated=catalog_mutated,
             start_url=start_url, final_url=final_url, products=len(products)))
 
     if not products:
