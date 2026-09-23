@@ -44,6 +44,7 @@ import tempfile
 from contextlib import redirect_stdout
 from dataclasses import asdict
 
+import cli_types
 import page_flow
 import product_parser
 import proxy_pool
@@ -71,12 +72,25 @@ for _name in ("playwright_scraper", "puppeteer_scraper", "selenium_scraper"):
 
 PASSED = []
 FAILED = []
+SKIPPED = []
 
 
 def check(label, condition):
     (PASSED if condition else FAILED).append(label)
     print(f"  {'PASS' if condition else 'FAIL'}  {label}")
     return bool(condition)
+
+
+def skip(label, why):
+    """Record a check that could NOT be made.
+
+    Deliberately not `check(label, True)`. A check asserted as True because
+    its input was missing is indistinguishable in the output from one that
+    actually ran, and the count it inflates is the number the README quotes.
+    """
+    SKIPPED.append(f"{label} ({why})")
+    print(f"  SKIP  {label} — {why}")
+    return False
 
 
 def eq(label, actual, expected):
@@ -641,7 +655,9 @@ def check_page_states():
            "cdn-cgi/challenge-platform", page_flow.classify(good).state,
            page_flow.CONTENT)
     else:
-        check("a real served page is content (capture not present, skipped)", True)
+        skip("a real served page is content",
+             "captures/live_search_page1_2026-09-19.html is not in this "
+             "checkout — see CONTRIBUTING.md on recording one")
     if good:
         # The rule itself, applied to the real marker set: NOT ONE of the
         # strings this repo calls a challenge may appear on a page the site
@@ -1757,8 +1773,9 @@ def check_concurrency_machinery():
 
         engine._fetch_one_page = fake_fetch
         specs = [(n, f"u{n}") for n in range(3, 13)]
-        results, unattempted, ran_out = engine._fetch_pages_concurrently(
+        results, unattempted, ran_out, empty_at = engine._fetch_pages_concurrently(
             Args(), None, specs, 4)
+        check("no page reports an empty page when none was empty", empty_at is None)
         eq("every queued page is fetched exactly once",
            sorted(fetched), [n for n, _ in specs])
         eq("nothing is left unattempted when all pages succeed", unattempted, [])
@@ -1779,9 +1796,11 @@ def check_concurrency_machinery():
             return outcome
 
         engine._fetch_one_page = fetch_until_empty
-        results, unattempted, ran_out = engine._fetch_pages_concurrently(
+        results, unattempted, ran_out, empty_at = engine._fetch_pages_concurrently(
             Args(), None, specs, 2)
         check("the end of the listing stops dispatch", ran_out)
+        eq("and the page that ended it is named, so the caller can tell a "
+           "legitimate stop from a gap below it", empty_at, 5)
         check("so most of the queue is never fetched "
               f"({len(fetched)} fetched of {len(specs)} queued)",
               len(fetched) < len(specs))
@@ -1803,10 +1822,48 @@ def check_concurrency_machinery():
             return outcome
 
         engine._fetch_one_page = sometimes_explodes
-        results, unattempted, ran_out = engine._fetch_pages_concurrently(
+        results, unattempted, ran_out, empty_at = engine._fetch_pages_concurrently(
             Args(), None, specs, 3)
-        check("a worker that raises does not hang the run", True)
         check("and its siblings' pages still come back", len(results) >= 1)
+
+        # The regression this group exists for. The page that raised was
+        # already off the queue, so before the fix it appeared in NO list —
+        # not results, not unattempted, not pages_failed — and the run went on
+        # to report itself complete with that page's listings missing.
+        returned = {o.page_num for o in results}
+        check("the page whose fetch raised is reported, not lost",
+              4 in returned)
+        lost = [o for o in results if o.page_num == 4][0]
+        check("and it is reported as a page that yielded nothing",
+              not lost.ok)
+        eq("with a stop reason that names what happened",
+           output_writer.failure_stop_reason(lost), "worker_lost_page")
+        eq("every requested page is in exactly one of results/unattempted",
+           sorted(returned | set(unattempted)), [n for n, _ in specs])
+
+        # A worker can also die BEFORE the per-page handler above can run —
+        # between taking a page off the queue and the fetch itself. The
+        # reconciliation pass is the backstop for that, and it is tested
+        # through a real failure rather than a stubbed one: the inter-page
+        # pause is the code that sits in that gap, so a delay it cannot sleep
+        # on kills the worker exactly there.
+        fetched.clear()
+
+        class HostileDelay:
+            """Unusable as a number, so time.sleep(args.delay) raises."""
+
+        class ArgsBadDelay(Args):
+            delay = HostileDelay()
+
+        engine._fetch_one_page = fake_fetch
+        results, unattempted, ran_out, empty_at = (
+            engine._fetch_pages_concurrently(ArgsBadDelay(), None, specs, 1))
+        taken = sorted({o.page_num for o in results} | set(unattempted))
+        eq("a worker dying between the queue and the fetch still leaves every "
+           "page accounted for", taken, [n for n, _ in specs])
+        reconciled = [o for o in results if o.lost]
+        check("and the page it was holding is reconciled back as lost",
+              len(reconciled) == 1 and reconciled[0].page_num == 4)
     finally:
         engine.sync_playwright, engine._BrowserSession, engine._fetch_one_page = original
 
@@ -1824,6 +1881,297 @@ def check_worker_pools_start_on_different_exits():
           engine._worker_pool(pool, 0) is not engine._worker_pool(pool, 0))
     eq("with no pool there is nothing to hand out",
        engine._worker_pool(None, 0), None)
+
+
+
+def check_run_integrity():
+    """No page may go missing, and no window may pass for a whole listing.
+
+    Every check here is a case that used to exit 0 with status=complete while
+    the output was short of what it claimed.
+    """
+    print("\n[run integrity]")
+    with tempfile.TemporaryDirectory() as tmp:
+        prefix = os.path.join(tmp, "run")
+
+        # 1. A page that went missing without anything noticing. stop_reason
+        #    still says "completed" because the engine never saw it go.
+        with redirect_stdout(io.StringIO()):
+            rc = finish_run([_row()], prefix, "json", False, blocked=False,
+                            stop_reason="completed", pages_requested=6,
+                            pages_completed=5, start_url="u", final_url="u")
+        eq("fewer pages back than asked for cannot be a complete run",
+           rc, EXIT_PARTIAL)
+        meta = json.load(open(f"{prefix}.meta.json", encoding="utf-8"))
+        eq("the sidecar says partial", meta["status"], "partial")
+        eq("and the stop reason names the gap", meta["stop_reason"],
+           "pages_missing")
+
+        with redirect_stdout(io.StringIO()):
+            rc = finish_run([_row()], prefix, "json", False, blocked=False,
+                            stop_reason="completed", pages_requested=6,
+                            pages_completed=6, pages_missing=[4],
+                            start_url="u", final_url="u")
+        eq("a page reported missing is partial even when the count adds up",
+           rc, EXIT_PARTIAL)
+        meta = json.load(open(f"{prefix}.meta.json", encoding="utf-8"))
+        eq("and the sidecar names which page", meta["pages_missing"], [4])
+
+        # 2. coverage: what the run went for, beside whether it got it.
+        with redirect_stdout(io.StringIO()):
+            finish_run([_row()], prefix, "json", False, blocked=False,
+                       stop_reason="completed", pages_requested=3,
+                       pages_completed=3, start_url="u", final_url="u")
+        meta = json.load(open(f"{prefix}.meta.json", encoding="utf-8"))
+        eq("three pages of a longer listing is a complete WINDOW",
+           (meta["status"], meta["coverage"]), ("complete", "window"))
+        with redirect_stdout(io.StringIO()):
+            finish_run([_row()], prefix, "json", False, blocked=False,
+                       stop_reason="listing_exhausted", pages_requested=9,
+                       pages_completed=4, start_url="u", final_url="u")
+        meta = json.load(open(f"{prefix}.meta.json", encoding="utf-8"))
+        eq("reaching the end of the listing is exhaustive coverage",
+           (meta["status"], meta["coverage"]), ("complete", "exhaustive"))
+
+        # 3. A page that carried listings and parsed to nothing is a parse
+        #    failure, never the end of the listing.
+        for reason in ("content_unparsed", "page_never_painted",
+                       "worker_lost_page", "pages_unattempted", "pages_missing"):
+            check(f"{reason} is not a complete stop reason",
+                  reason not in output_writer.COMPLETE_STOP_REASONS)
+
+        class _Outcome:
+            def __init__(self, state):
+                self.state = state
+                self.parse_failed = True
+                self.load_failed = False
+                self.lost = False
+
+        eq("a page full of listings that would not parse is a schema failure",
+           output_writer.failure_stop_reason(
+               _Outcome(page_flow.PageState(page_flow.CONTENT, "25 records"))),
+           "content_unparsed")
+        eq("a page that never painted is named as that instead",
+           output_writer.failure_stop_reason(
+               _Outcome(page_flow.PageState(page_flow.UNPAINTED, "app shell"))),
+           "page_never_painted")
+        with redirect_stdout(io.StringIO()):
+            rc = finish_run([_row()], prefix, "json", False, blocked=False,
+                            stop_reason="content_unparsed", pages_requested=3,
+                            pages_completed=1, start_url="u", final_url="u")
+        eq("a page that would not parse ends the run as partial",
+           rc, EXIT_PARTIAL)
+
+        # 4. The catalogue moving underneath the run is recorded, not hidden.
+        with redirect_stdout(io.StringIO()):
+            finish_run([_row()], prefix, "json", False, blocked=False,
+                       stop_reason="completed", pages_requested=2,
+                       pages_completed=2, total_results_first=672,
+                       total_results_last=671, start_url="u", final_url="u")
+        meta = json.load(open(f"{prefix}.meta.json", encoding="utf-8"))
+        check("a total_results that moved mid-run is flagged",
+              meta["catalog_mutated"] is True)
+        with redirect_stdout(io.StringIO()):
+            finish_run([_row()], prefix, "json", False, blocked=False,
+                       stop_reason="completed", pages_requested=2,
+                       pages_completed=2, total_results_first=672,
+                       total_results_last=672, start_url="u", final_url="u")
+        meta = json.load(open(f"{prefix}.meta.json", encoding="utf-8"))
+        check("and a steady one is not", meta["catalog_mutated"] is False)
+
+    # 5. merge_pages records the overlap instead of gating on it: an
+    #    insertion ahead of the cursor repeats one listing and loses nothing,
+    #    so failing on it would turn every insertion into a false partial.
+    merged, stats = output_writer.merge_pages([
+        (1, [_row(sku="a"), _row(sku="b")]),
+        (2, [_row(sku="b"), _row(sku="c")]),
+    ])
+    eq("an overlapping page still merges to one row per sku",
+       [r.sku for r in merged], ["a", "b", "c"])
+    eq("with the rows it started from counted", stats.rows_before_dedupe, 4)
+    eq("and the repeat recorded", stats.duplicate_skus_across_pages, 1)
+    eq("against the page it came from", stats.duplicate_pages, [2])
+    merged, stats = output_writer.merge_pages([
+        (2, [_row(sku="c")]), (1, [_row(sku="a")])])
+    eq("pages merge in page order however they arrived",
+       [r.sku for r in merged], ["a", "c"])
+
+
+def check_csv_is_not_a_formula():
+    """A scraped title is site-controlled text, and a CSV is opened in Excel."""
+    print("\n[csv injection]")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "out.csv")
+        output_writer.write_csv(
+            [_row(sku="1", title='=HYPERLINK("http://evil","Click")'),
+             _row(sku="2", title="+1-800-EVIL"),
+             _row(sku="3", title="Normal SaaS business")], path)
+        with open(path, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        check("a formula in a title is neutralised",
+              rows[0]["title"].startswith("'="))
+        check("and so is one that starts with a sign",
+              rows[1]["title"].startswith("'+"))
+        eq("ordinary text is left exactly as it was",
+           rows[2]["title"], "Normal SaaS business")
+
+    # The column that made the naive fix wrong: profit is legitimately
+    # negative, and a quote in front of it would corrupt the number.
+    eq("a negative number keeps its sign and its type",
+       output_writer.csv_safe(-1234.5), -1234.5)
+    eq("and None stays None", output_writer.csv_safe(None), None)
+
+
+def check_writes_are_atomic():
+    """A crash mid-write must not leave a truncated file where a good one was."""
+    print("\n[atomic output]")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "out.json")
+        output_writer.write_json([_row(sku="good")], path)
+
+        def explode(f):
+            f.write('[{"sku": "hal')
+            raise RuntimeError("disk full")
+
+        try:
+            output_writer._atomic_write(path, explode)
+        except RuntimeError:
+            pass
+        eq("a failed write leaves the previous file intact",
+           [r["sku"] for r in json.load(open(path, encoding="utf-8"))], ["good"])
+        leftovers = [n for n in os.listdir(tmp) if n.startswith(".tmp-")]
+        eq("and no temporary file behind", leftovers, [])
+
+
+def check_cli_refuses_impossible_values():
+    """Bounds on the flags whose out-of-range values change what a run means."""
+    print("\n[cli bounds]")
+    import argparse as _argparse
+    for value in ("0", "-1"):
+        try:
+            cli_types.positive_int(value)
+            check(f"--pages/--retries {value} is refused", False)
+        except _argparse.ArgumentTypeError:
+            check(f"--pages/--retries {value} is refused", True)
+    eq("a sane page count passes through", cli_types.positive_int("3"), 3)
+    try:
+        cli_types.non_negative_float("-1")
+        check("a negative delay is refused", False)
+    except _argparse.ArgumentTypeError:
+        check("a negative delay is refused", True)
+    eq("zero delay is allowed, it means no pause",
+       cli_types.non_negative_float("0"), 0.0)
+    check("a URL with no scheme is refused",
+          bool(cli_types.check_listing_url("flippa.com/search")))
+    check("and a non-http scheme too",
+          bool(cli_types.check_listing_url("ftp://flippa.com/search")))
+    eq("a real listing URL passes",
+       cli_types.check_listing_url("https://flippa.com/search?x=1"), [])
+    check("the expected host is recognised",
+          cli_types.host_is_expected("https://flippa.com/search"))
+    check("including a subdomain", cli_types.host_is_expected("https://www.flippa.com/x"))
+    check("and a lookalike is not",
+          not cli_types.host_is_expected("https://flippa.com.evil.test/x"))
+
+
+
+def check_diff_refuses_a_window_comparison():
+    """`complete` answers a different question from `covers the whole listing`.
+
+    Two three-page runs of a 27-page listing are both complete. A listing that
+    merely moved from page 3 to page 4 between them is absent from the second
+    file, and reporting that as `removed` reads as "this business was sold".
+    """
+    print("\n[diff coverage]")
+    import diff_runs
+
+    def _write(prefix, skus, coverage, status="complete", **extra):
+        with open(f"{prefix}.json", "w", encoding="utf-8") as f:
+            json.dump([{"sku": s, "price": 100, "price_source": "state"}
+                       for s in skus], f)
+        meta = {"status": status, "coverage": coverage, "pages_completed": 3,
+                "pages_requested": 3, "stop_reason": "completed",
+                "total_results": 672}
+        meta.update(extra)
+        with open(f"{prefix}.meta.json", "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        old = os.path.join(tmp, "old")
+        new = os.path.join(tmp, "new")
+        out = os.path.join(tmp, "diff.json")
+        real_argv = sys.argv
+
+        def run(*flags):
+            sys.argv = ["diff_runs.py", "--old", f"{old}.json",
+                        "--new", f"{new}.json", "--out", out, *flags]
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = diff_runs.main()
+            return rc, buf.getvalue(), json.load(open(out, encoding="utf-8"))
+
+        try:
+            # Two window runs: the listing that "vanished" may just be on the
+            # next page, so the assortment halves are not conclusions.
+            _write(old, ["a", "b"], "window")
+            _write(new, ["a", "c"], "window")
+            rc, text, result = run()
+            eq("a window diff still runs", rc, 0)
+            check("but says the assortment is not comparable",
+                  result["assortment_comparable"] is False)
+            check("and explains why in words the reader can act on",
+                  "WINDOW" in text and "left-window" in text)
+            rc, _text, _result = run("--fail-on-change")
+            eq("--fail-on-change does not fire on a window's added/removed",
+               rc, 0)
+
+            # Same two files, both runs exhaustive: now removed means removed.
+            _write(old, ["a", "b"], "exhaustive")
+            _write(new, ["a", "c"], "exhaustive")
+            rc, _text, result = run()
+            check("two exhaustive runs ARE comparable",
+                  result["assortment_comparable"] is True)
+            eq("and the diff says what left the listing",
+               [p["sku"] for p in result["removed"]], ["b"])
+            rc, _text, _result = run("--fail-on-change")
+            eq("--fail-on-change fires on a real assortment change", rc, 1)
+
+            # A price change is comparable either way.
+            _write(old, ["a"], "window")
+            with open(f"{new}.json", "w", encoding="utf-8") as f:
+                json.dump([{"sku": "a", "price": 200, "price_source": "state"}], f)
+            _write(new, [], "window")
+            with open(f"{new}.json", "w", encoding="utf-8") as f:
+                json.dump([{"sku": "a", "price": 200, "price_source": "state"}], f)
+            rc, _text, _result = run("--fail-on-change")
+            eq("a price change on a sku both runs hold still fires", rc, 1)
+
+            # A catalogue edited mid-run is called out on its own.
+            _write(old, ["a"], "exhaustive")
+            _write(new, ["a"], "exhaustive", catalog_mutated=True,
+                   total_results_first=672, total_results_last=671)
+            _rc, text, result = run()
+            check("a run that raced the catalogue is flagged in the diff",
+                  result["assortment_comparable"] is False
+                  and "edited" in text)
+
+            # An older sidecar with no coverage key at all.
+            _write(old, ["a"], None)
+            _write(new, ["a"], None)
+            _rc, text, _result = run()
+            check("a sidecar written before coverage existed says so",
+                  "unknown" in text)
+
+            # And the refusal that was already there still refuses.
+            _write(old, ["a"], "exhaustive", status="partial")
+            _write(new, ["a"], "exhaustive")
+            sys.argv = ["diff_runs.py", "--old", f"{old}.json",
+                        "--new", f"{new}.json"]
+            with redirect_stdout(io.StringIO()):
+                rc = diff_runs.main()
+            eq("a partial run is still refused outright", rc, 2)
+        finally:
+            sys.argv = real_argv
 
 
 def main() -> int:
@@ -1853,11 +2201,17 @@ def main() -> int:
                   check_packaging_matches_the_tree,
                   check_credentialled_paths_run,
                   check_concurrency_machinery,
-                  check_worker_pools_start_on_different_exits):
+                  check_worker_pools_start_on_different_exits,
+                  check_run_integrity, check_csv_is_not_a_formula,
+                  check_writes_are_atomic,
+                  check_cli_refuses_impossible_values,
+                  check_diff_refuses_a_window_comparison):
         group()
 
     print("\n" + "=" * 62)
-    print(f"{len(PASSED)} passed, {len(FAILED)} failed")
+    print(f"{len(PASSED)} passed, {len(FAILED)} failed, {len(SKIPPED)} skipped")
+    for line in SKIPPED:
+        print(f"  SKIPPED: {line}")
     if SKIPPED_GROUPS:
         # Printed in a shape CI greps for: "skipped, engine absent" reads
         # identically to a real import error, so the engine-smoke job fails
