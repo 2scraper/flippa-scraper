@@ -15,6 +15,19 @@ while the output was short of what it claimed.
 
 ### Fixed
 
+- **Runtime captcha detection never ran, in any engine.** The in-page
+  discovery script began ` => {`, with no parameter list. That is a
+  SyntaxError, and it was logged at debug level. Selenium also returned the
+  function instead of calling it. Both are fixed, and a discovery failure is
+  now a warning. The suite now runs `node --check` on every shipped script
+  and executes discovery in a real Chromium page. A script error there is a
+  failure, not a skip.
+- **An explicitly rendered reCAPTCHA v2 widget was classified as v3** by the
+  HTML detector. 2Captcha answers a v2 task sent as v3 with
+  `ERROR_CAPTCHA_UNSOLVABLE`. Found by a live solve in screener-scraper
+  (2026-09-28, 2Captcha's reCAPTCHA v2 demo page), which shares this
+  module; after the fix, the demo page's own server-side check returned
+  `"success": true`.
 - **A worker that died took its page with it.** In
   `_fetch_pages_concurrently` the page was already off the queue when the
   fetch raised, and the `except` sat outside the loop: the page appeared in
