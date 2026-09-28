@@ -141,6 +141,10 @@ balance answers 403 here (measured 2026-09-19). The field mapping in this repo
 has therefore never been checked against a real response, which the module
 docstring says plainly rather than implying otherwise.
 
+A scraper run with `--fingerprint` on such a key stops with **exit 5** and
+that reason before fetching anything. Drop `--fingerprint`, or enable the
+subscription.
+
 ## Solving a captcha on `/signup` does not get you anything
 
 It is not meant to. `/signup` carries a real Turnstile, and `--solve-captcha

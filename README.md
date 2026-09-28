@@ -199,7 +199,10 @@ each line says whether it was run against the live API on 2026-09-19:
   launched yourself. **Not verified:** the same key answered **HTTP 403** at
   `/fingerprint/random`; fingerprints are a separate subscription. Rather than
   imply it works, `fingerprint_client.py --explain` prints field by field what
-  it could and could not apply, and the 403 now says exactly that.
+  it could and could not apply, and the 403 now says exactly that. Since
+  0.2.0 a scraper run with `--fingerprint` stops there with **exit 5** and
+  that reason, before any page is fetched, instead of crashing with exit 1
+  (re-measured 2026-09-28: still 403).
 
 ## Exit codes
 
