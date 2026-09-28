@@ -7,6 +7,13 @@ means fixes, not that every flag is frozen. A behaviour-changing default in a
 patch release is announced at the top of its notes rather than discovered from
 a bill.
 
+## [Unreleased]
+
+### Changed
+
+- README and TROUBLESHOOTING say that a `--fingerprint` run on a key
+  without the Fingerprint subscription stops with exit 5, not exit 1.
+
 ## [0.2.0] — 2026-09-28
 
 Data-integrity fixes from a second review of the 2026-09-21 external audit,
