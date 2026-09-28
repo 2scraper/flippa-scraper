@@ -7,11 +7,30 @@ means fixes, not that every flag is frozen. A behaviour-changing default in a
 patch release is announced at the top of its notes rather than discovered from
 a bill.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-28
 
-Data-integrity fixes from a second review of the 2026-09-21 external audit.
-Every item below is a case where a run could exit 0 with `status: complete`
-while the output was short of what it claimed.
+Data-integrity fixes from a second review of the 2026-09-21 external audit,
+and captcha and fingerprint fixes from the family core. Nearly every item
+below is a case where a run could exit 0 with `status: complete` while the
+output was short of what it claimed.
+
+> **Behaviour changes for an existing user:**
+>
+> - A run that loses, skips or cannot parse a page is now reported as
+>   **partial** (exit 6) or failed, where 0.1.0 said `complete` with exit 0.
+>   A pipeline that treated exit 0 as "all pages" was already wrong; now it
+>   is told so.
+> - `--pages`, `--retries`, `--concurrency` and `--timeout` refuse values
+>   below 1, and delays refuse negatives. That is exit 2, before any
+>   request.
+> - Text columns in the CSV that begin with `=`, `+`, `-`, `@`, a tab or a
+>   CR are neutralised against spreadsheet formula injection. Numeric
+>   columns are unchanged.
+> - `.meta.json` gains `coverage` and the catalogue-integrity fields, and
+>   `diff_runs.py` labels a window comparison as entered-window /
+>   left-window.
+> - `--fingerprint` against a Fingerprint API that refuses the key exits
+>   5 with the reason. It used to crash with exit 1.
 
 ### Fixed
 
