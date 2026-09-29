@@ -145,6 +145,11 @@ A scraper run with `--fingerprint` on such a key stops with **exit 5** and
 that reason before fetching anything. Drop `--fingerprint`, or enable the
 subscription.
 
+And on **0.2.0 and earlier** it did nothing even with a subscribed key: the
+init script that patches `navigator` and WebGL was syntactically broken
+JavaScript, and a browser drops a broken init script silently. Fixed in
+0.2.1, where the suite also runs `node --check` on it.
+
 ## Solving a captcha on `/signup` does not get you anything
 
 It is not meant to. `/signup` carries a real Turnstile, and `--solve-captcha
