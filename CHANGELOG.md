@@ -7,7 +7,7 @@ means fixes, not that every flag is frozen. A behaviour-changing default in a
 patch release is announced at the top of its notes rather than discovered from
 a bill.
 
-## [Unreleased]
+## [0.2.1] — 2026-09-29
 
 ### Fixed
 
