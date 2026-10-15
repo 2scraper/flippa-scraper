@@ -6,10 +6,10 @@ name: canary
 # against a known-good filtered URL.
 #
 # --pages 3, not 1: with one page pagination is never exercised, and
-# pagination is precisely where this site's failure mode lives. Flippa
-# publishes no next-page link at all, so every page after the first is a
-# CONSTRUCTED URL, and if that convention changes the run must go red rather
-# than return page 1 three times and report success.
+# pagination is precisely where this site's failure mode lives. Every page
+# after the first is a CONSTRUCTED URL (?page=N), and if that convention
+# changes the run must go red rather than return page 1 three times and
+# report success.
 on:
   schedule:
     # Off the hour, so it is not competing with every other cron job for
@@ -85,10 +85,10 @@ jobs:
           from pathlib import Path
 
           PAGES_REQUESTED = 3
-          # 25 listings per page, so three pages is 75. The floor is set well
-          # below that rather than tracking it, and this filter has had 700+
-          # matches on every measured day.
-          MIN_LISTINGS = 60
+          # 50 listings per page since the site's 2026-09-29 rebuild, so three
+          # pages is 150. The floor is set well below that rather than tracking
+          # it; this filter had 671-676 matches on 2026-10-14/15.
+          MIN_LISTINGS = 120
 
           rows = json.loads(Path("canary_run.json").read_text())
           meta = json.loads(Path("canary_run.meta.json").read_text())
@@ -105,7 +105,7 @@ jobs:
           # The check the whole --pages 3 exists for.
           if meta.get("addressable") is not True:
               fail.append("page 2 did not carry listings page 1 lacked — the "
-                          "?page[number]= convention has stopped working")
+                          "?page= convention has stopped working")
           if len({r["sku"] for r in rows}) != len(rows):
               fail.append("duplicate skus across pages")
           if len({(r["page"], r["position"]) for r in rows}) != len(rows):
@@ -115,11 +115,22 @@ jobs:
           priced = sum(1 for r in rows if r.get("price") is not None)
           if rows and priced / len(rows) < 0.95:
               fail.append(f"only {priced}/{len(rows)} rows have a price")
-          confirmed = sum(1 for r in rows if r.get("price_source") == "state+dom")
-          if rows and confirmed / len(rows) < 0.8:
-              fail.append(f"only {confirmed}/{len(rows)} rows had the embedded "
-                          f"JSON confirmed against a rendered card — the grid "
-                          f"may have stopped painting")
+          # Columns every card carries. A share below 95% means the card
+          # markup moved under a column while the cards themselves still
+          # parse — the shape the 2026-09-29 rebuild would have taken had
+          # the card id survived. Measured 2026-10-15 on this URL: 150/150
+          # for each. Not seasonal: no promotion or badge decides them.
+          for column in ("title", "asset_type", "industry", "country",
+                         "age_text", "monthly_revenue"):
+              have = sum(1 for r in rows if r.get(column) is not None)
+              if rows and have / len(rows) < 0.95:
+                  fail.append(f"only {have}/{len(rows)} rows have {column}")
+          wrong = [r["sku"] for r in rows
+                   if r.get("original_price") is not None
+                   and r.get("price") is not None
+                   and r["original_price"] <= r["price"]]
+          if wrong:
+              fail.append(f"original_price at or below price on {wrong[:5]}")
           for line in fail:
               print(f"::error::{line}")
           sys.exit(1 if fail else 0)

@@ -17,13 +17,18 @@ Four engines, one parser, JSON and CSV out.
 Part of the [2scraper](https://github.com/2scraper) family of open-source,
 single-site scrapers.
 
-**Status: live-verified on 2026-09-19 and 2026-09-21.** Playwright, pyppeteer
-and Selenium each ran against `?filter[property_type]=saas` and returned
-byte-identical data — 75 listings across 3 pages, about 10 seconds, exit 0 —
-and so did the same engine driving 2Captcha's Scraping Browser over CDP.
-The daily canary passed on its first manual dispatch **from a bare GitHub
-runner**: no proxy, no key, a datacentre address, 75 listings and
-`status: complete`. The offline suite needs no network; how many checks it runs depends on which optional engines are installed, and it prints the count with any skips beside it rather than promising a fixed number.
+**Status: live-verified on 2026-10-15 after a site rebuild.** Flippa rebuilt
+its search page between 2026-09-28 and 2026-09-29 (the embedded listing JSON
+and the Angular cards this repo read are gone), and every run from then until
+this release returned 0 listings — the daily canary was red throughout. The
+parser now reads the server-rendered cards: the Playwright engine ran against
+`?filter[property_type]=saas` on 2026-10-15 from a datacentre address with no
+proxy and no key and returned **150 listings across 3 pages, exit 0,
+`status: complete`**. The other engines share the parser but were not re-run
+after the rebuild; their figures below are from 2026-09-19 and say so. The
+offline suite needs no network; how many checks it runs depends on which
+optional engines are installed, and it prints the count with any skips beside
+it rather than promising a fixed number.
 
 ## What it extracts
 
@@ -32,102 +37,81 @@ One row per listing, 33 columns. The interesting ones:
 | Column | What it is |
 |---|---|
 | `sku` | Flippa's own numeric listing id — the key `diff_runs.py` compares on |
-| `url` | `https://flippa.com/<id>` |
-| `title` | The card's heading, e.g. `SaaS | Health and Beauty` |
+| `url` | The listing's own link: `https://flippa.com/<id>-<slug>` |
+| `title` | The card's heading, e.g. `SaaS | Internet` for a confidential listing, or the business's name |
 | `description` | The seller's own one-line summary |
-| `price` / `currency` | Asking price. Every listing measured so far is priced in USD, and the column is `null` rather than a guess if that ever changes |
-| `original_price` / `discount_pct` | Present when the price was reduced. The discount is **computed from the two prices**, not read off the site's "Reduced 38%" badge |
-| `asset_type` / `industry` / `monetization` | SaaS, Ecommerce, Domain… / Health and Beauty, Business… / Ads, Services & Subscriptions… |
-| `monthly_profit` / `monthly_revenue` | Net profit and revenue per month. **Profit can be negative** and is reported that way |
-| `profit_multiple` / `revenue_multiple` | Flippa's own valuation multiples, `null` where the site shows none |
-| `age_text` / `country` | As the site writes them: "3 years", "MI, United States" |
-| `status` / `sale_method` / `bid_count` | open/won, classified/auction, bids where it is an auction |
-| `broker_name` | Where a broker is named |
-| `managed_by_flippa` / `sponsored` / `editors_choice` / `confidential` / `verified_listing` | Badges, read from the site's own field names rather than from card text |
+| `price` / `currency` | Asking price (the starting price or current bid on an auction). `null` for an "Open to Offers" listing, whose card shows only a price GUIDE range, and for a partial-equity sale. Currency is read off the card — USD on `/search`, EUR on `/fr/search` — never defaulted |
+| `original_price` / `discount_pct` | Present when the price was reduced. The discount is **computed from the two prices**, not read off the site's "Reduced 28%" badge |
+| `asset_type` / `industry` | SaaS, Ecommerce, YouTube Channel… / Internet, Health and Beauty… |
+| `monthly_profit` / `monthly_revenue` | Per month. **Profit can be negative** and is reported that way. The card prints both ABBREVIATED ("USD $51.7K"), so they carry three significant figures, not the exact amount |
+| `profit_multiple` | Flippa's own multiple as printed ("4.1x"), `null` where the card shows none |
+| `age_text` / `country` | As the site writes them: "12 years", "FL, United States" |
+| `bid_count` | "21 bids" on an auction card; `null` otherwise |
+| `broker_name` / `managed_by_flippa` | The broker named on the card, and whether it says "Brokered by Flippa" |
 | `page` / `position` | Where the row sat in the run. The PAIR is unique — `position` restarts at 1 on every page |
-| `price_source` | `state` / `state+dom` / `dom` — which view produced the row (see below) |
+| `price_source` | `dom` — read off the card. Runs from before 2026-09-29 say `state` or `state+dom` |
+
+`monetization`, `revenue_multiple`, `status`, `sale_method`, `sponsored`,
+`editors_choice`, `confidential`, `verified_listing` and `image_url` are still
+in the schema so a consumer's columns do not move, but the rebuilt card does
+not show them and they are `null` on every row read since 2026-09-29.
 
 Plus `source`, `scraped_at`, `category` (your `--category` label or one taken
 from the URL) and `image_url`. The full row is in
 [`sample_output.json`](sample_output.json), cut from the real run above.
 
-Three columns the rest of this family has are deliberately **absent** here,
-each with the measurement behind it: `brand` (Flippa sells businesses, not
-branded goods — 0 of 25 rows on every capture), `rating` (a listing card shows
-none; the embedded JSON has an `app_rating` on 1 of 25 rows and it rates the
-app, not the listing) and `in_stock` (not a concept here — `status` and
-`sale_method` carry what the marketplace actually says).
+Three columns the rest of this family has are deliberately **absent** here:
+`brand` (Flippa sells businesses, not branded goods), `rating` (a listing card
+shows none) and `in_stock` (not a concept on a marketplace for businesses).
 
-## How it reads the page, and why that matters
+## How it reads the page
 
-Flippa's search results are an Angular app, and the obvious conclusion — "this
-needs a rendered browser" — is **wrong**, which is the single most useful fact
-in this repo.
+Flippa's search page is **server-rendered**: all 50 listing cards of a page
+are in the first HTTP response, with no JavaScript needed to produce them.
+There is no structured listing data on it — no product JSON-LD, and since
+2026-09-29 no embedded listing JSON either — so the cards are the source:
 
-The page Flippa SERVES already contains every listing, as its own JSON:
+* A card is `<li id="listing-NNN">`. Its boundary is that id, not a CSS class
+  (Flippa's are Tailwind build output). The page also carries filter counters
+  with ids like `listing-category-count-saas`, which is why the id is matched
+  as `listing-` plus digits, never as a bare prefix.
+* The price column is read below the card's rule, never from the whole card:
+  the key-data grid above it carries money too ("USD $51.7K" monthly profit).
+* Key-data labels are translated on `/fr/` and `/es/` ("Bénéfice mensuel",
+  "Beneficio mensual"); the parser has the three languages the site
+  publishes, and a label it does not know leaves its column `null`.
+* The site's own count — "Show 676 results" in the filter panel — tells an
+  empty query ("Show 0 results", exit 4) apart from a page past the end of a
+  listing (no cards, count above zero: the listing is complete) and from a
+  page that was not a listing at all.
 
-```html
-<script>
-  const STATE = {"results":[{"id":"12857417","price":436829,
-                 "original_price":927250,"profit_average":"13,202", ...}],
-                 "metadata":{"totalResults":724}};
-</script>
-```
+## Pagination
 
-So:
-
-1. **Primary path — that embedded JSON.** Numeric, complete, present in the
-   first HTTP response with no JavaScript executed. There is no product
-   JSON-LD on this site at all: a search page carries exactly two
-   `application/ld+json` blocks, a `WebPage` and an `FAQPage`, and neither
-   contains a listing.
-2. **Fallback path — the rendered cards** (`<div id="listing-NNN">`), for a
-   page a browser has navigated inside the app. Verified against the primary
-   path on a real 25-card capture: **the two agree on all 22 shared columns,
-   for all 25 rows.**
-3. `price_source` on every row says which produced it, so two runs that read
-   the page differently cannot look like a price change.
-
-A card's boundary is the site's own `id` attribute, not a CSS class (Flippa's
-are Tailwind build output) and not "widen up from a product link" — a real
-card holds three links to the same listing, so that heuristic never leaves the
-anchor.
-
-## Pagination, and the bug this repo used to have
-
-**Flippa publishes no next-page link.** The control is
-`<span ng-click="pageChangeHandle(2)">2</span>` with no `href`, so there is
-nothing to follow. Pages are addressed by URL instead — and the convention is
-not the obvious one. From the site's own shipped JavaScript:
-
-```js
-e.currentPage > 1 ? t["page[number]"] = e.currentPage : …,
-t.page && delete t.page          // a bare ?page= is DELETED
-```
-
-So `?page=2` is discarded by the app, and every multi-page run this repo did
-before that was read out of the bundle returned exactly 25 rows and reported
-success. The correct form is `?page[number]=2`, and **every run verifies it**:
-page 2 is fetched on its own and checked for listings page 1 did not have. If
-it has none, the run stops and reports `partial` with
-`stop_reason: pagination_not_addressable` rather than a complete-looking
-result holding one page.
+Pages are addressed by URL, `?page=N` — the parameter the site's own next
+link uses (`?page=2&pagination=true`). Measured 2026-10-14 on a 676-match
+filter: 50 per page, page 14 holds the last 26, page 15 answers HTTP 200 with
+no cards. **Every run verifies the convention**: page 2 is fetched on its own
+and checked for listings page 1 did not have. If it has none, the run stops
+and reports `partial` with `stop_reason: pagination_not_addressable` rather
+than a complete-looking result holding one page. That check exists because an
+earlier version of this repo used a page parameter the site ignored and
+returned one page of rows, reporting success, on every multi-page run.
 
 `--concurrency N` fetches pages 3..N through N workers, each with its own
 browser and its own proxy exit, and only after that check has passed.
 
 ## Four ways to run it
 
-| Script | Engine | Live status, 2026-09-19 |
+| Script | Engine | Live status |
 |---|---|---|
-| `playwright_scraper.py` | **Playwright** (recommended) | 75 listings / 3 pages / ~10s / exit 0 |
-| `puppeteer_scraper.py` | pyppeteer | 50 listings / 2 pages, identical data. Needs `PYPPETEER_EXECUTABLE_PATH` on modern macOS — its bundled Chromium is from 2018 |
-| `selenium_scraper.py` | Selenium + Chrome | 50 listings / 2 pages, identical data. Two page-1 loads timed out at 60s first and the retry carried it |
-| `scraper_api_client.py` | 2Captcha Scraper API (no local browser) | 50 listings / 2 pages, identical data. Two billable tasks at $0.0005 each |
-| any of the three, with `--cdp-endpoint` | 2Captcha Scraping Browser API | 75 listings / 3 pages, identical data. `Captcha.setAutoSolve` enabled on connect; `--concurrency` refused, one live connection per profile |
+| `playwright_scraper.py` | **Playwright** (recommended) | 2026-10-15, after the rebuild: 150 listings / 3 pages / exit 0 |
+| `puppeteer_scraper.py` | pyppeteer | 2026-09-19, before the rebuild: 50 listings / 2 pages, identical data. Needs `PYPPETEER_EXECUTABLE_PATH` on modern macOS — its bundled Chromium is from 2018 |
+| `selenium_scraper.py` | Selenium + Chrome | 2026-09-19, before the rebuild: 50 listings / 2 pages, identical data. Two page-1 loads timed out at 60s first and the retry carried it |
+| `scraper_api_client.py` | 2Captcha Scraper API (no local browser) | 2026-09-19, before the rebuild: 50 listings / 2 pages, identical data. Two billable tasks at $0.0005 each |
+| any of the three, with `--cdp-endpoint` | 2Captcha Scraping Browser API | 2026-09-19, before the rebuild: 75 listings / 3 pages, identical data. `Captcha.setAutoSolve` enabled on connect; `--concurrency` refused, one live connection per profile |
 
-All three browser engines produced **byte-identical rows** (`scraped_at`
-aside) for the same 50 listings. They share the parser, the page-state
+On 2026-09-19 all three browser engines produced **byte-identical rows**
+(`scraped_at` aside) for the same 50 listings. They share the parser, the page-state
 policy and the exit-code mapping precisely so that stays true.
 
 ## Install and run
@@ -158,9 +142,10 @@ python3 env_config.py     # says what was picked up, without printing it
 
 **State it plainly: you do not need any of them for this site.** Every number
 in this README was measured with no API key, no proxy and no Scraping Browser
-— including six plain `curl` fetches that each came back with 25 complete
-listings. flippa.com is behind Cloudflare, but it served an ordinary request
-from an ordinary connection every time it was asked on 2026-09-19.
+— including plain `curl` fetches on 2026-10-14 that each came back with all 50
+cards of a page. flippa.com is behind Cloudflare, but it served an ordinary
+request from an ordinary connection every time it was asked, on 2026-09-19
+and again on 2026-10-14/15 (including from GitHub's runners).
 
 What the four 2Captcha products (one key, billed separately) actually buy —
 each line says whether it was run against the live API on 2026-09-19:
@@ -183,9 +168,9 @@ each line says whether it was run against the live API on 2026-09-19:
   for.
 * **The Scraper API** (`scraper_api_client.py`) — no browser at all.
   **Verified:** two billable tasks at $0.0005 each returned 50 listings whose
-  every column matches the browser engines', bar `price_source` — `state`
-  there against `state+dom` here, because a browserless fetch has no rendered
-  card to cross-check against. That is the column doing its job.
+  every column matched the browser engines' (2026-09-19, before the site's
+  rebuild; the rebuilt page is server-rendered, so the browserless path reads
+  the same cards).
 * **The Scraping Browser API** (`--cdp-endpoint`) — no browser infrastructure
   of your own, a consistent device identity, a chosen exit country, and
   `Captcha.setAutoSolve`, which clears a challenge inside the browser before
@@ -250,15 +235,13 @@ complete-looking run.
 Read [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for the full list with the
 measurements. The four that cost the most time:
 
-* **A "3-page" run returning 25 rows** is pagination, and this repo now
-  detects it rather than reporting success — see above.
+* **A "3-page" run returning one page of rows** is pagination, and this repo
+  now detects it rather than reporting success — see above.
 * **`profit_multiple` does not always equal `price ÷ (12 × monthly_profit)`.**
-  53 of 63 listings agreed within 0.15 on 2026-09-19; 10 did not. It is
-  Flippa's own figure, computed over a profit window this repo cannot see, and
-  it is reported as published rather than "corrected".
-* **A zero-match query still returns five listings.** They are promoted
-  placements next to `totalResults: 0`, and reporting them would be five
-  fabricated rows.
+  It is Flippa's own figure as printed, the card rounds the monthly profit,
+  and it is reported as published rather than "corrected".
+* **`monthly_profit` and `monthly_revenue` are rounded** — the card prints
+  "USD $51.7K", and that is the precision the column has.
 * **`<captcha-widgets>` is not Flippa's.** Captures taken through the
   Scraping Browser carry an empty `<captcha-widgets>` on every page, and it
   reads like the site's own captcha mount. It is the 2Captcha autosolver

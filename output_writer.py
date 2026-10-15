@@ -17,10 +17,10 @@ of every run:
   brand         Flippa sells businesses, not branded goods. 0 of 25 rows on
                 the 2026-08-27 capture and 0 of 25 on each 2026-09-19 capture
                 carry anything brand-shaped.
-  rating        A listing card shows no rating. The embedded JSON has an
-                `app_rating` on 1 of 25 rows (an App Store rating for an iOS
-                listing, not a rating OF the listing), so the column would be
-                null on ~96% of rows and mean something different on the rest.
+  rating        A listing card shows no rating (none on the 2026-10-14 cards;
+                before the site's 2026-09-29 rebuild, 1 of 25 rows carried an
+                App Store rating for an iOS listing, not a rating OF the
+                listing).
   in_stock      Not a concept here; `status` and `sale_method` carry what the
                 marketplace actually says about availability.
 """
@@ -51,16 +51,12 @@ class Product:
     original_price: Optional[float] = None
     discount_pct: Optional[float] = None
     category: Optional[str] = None     # the --category label for this run
-    # Where the row came from, because the same columns can be filled from two
-    # views with different confidence and nothing used to say which:
-    #   "state"     — the listing JSON Flippa embeds in the page it serves
-    #                 (`const STATE = {...}`). Numeric, complete, and what the
-    #                 grid itself is rendered from.
-    #   "state+dom" — the same row, cross-checked against the rendered card
-    #                 with the matching id. Both views agreed.
-    #   "dom"       — the rendered card only: the fallback path, used when the
-    #                 embedded JSON is absent or unparseable. Several columns
-    #                 are not on the card at all and stay null.
+    # Where the row came from. Since Flippa's 2026-09-29 rebuild every row is
+    #   "dom"       — read off the listing card in the served HTML.
+    # Runs from before that read the listing JSON the site embedded then, and
+    # carry "state" or "state+dom" ("state" cross-checked against the card);
+    # diff_runs.py reports a price difference that comes with a different
+    # price_source as source_changed rather than as a price change.
     price_source: Optional[str] = None
     # Which page of the listing this row came from, and its 1-based position
     # within that page. `position` restarts at 1 on every page, so the pair is
@@ -72,18 +68,26 @@ class Product:
     description: Optional[str] = None      # the seller's own one-line summary
     asset_type: Optional[str] = None       # "SaaS", "Ecommerce", "Domain", ...
     industry: Optional[str] = None         # "Health and Beauty", "Business", ...
-    monetization: Optional[str] = None     # "Services & Subscriptions", "Ads", ...
-    monthly_profit: Optional[float] = None    # net profit per month, may be negative
+    # Not on the card since 2026-09-29; null on every row read since.
+    monetization: Optional[str] = None
+    # Net profit per month, may be negative. Both monthly figures are printed
+    # ABBREVIATED on the card ("USD $51.7K"), so they carry three significant
+    # figures, not the exact amount.
+    monthly_profit: Optional[float] = None
     monthly_revenue: Optional[float] = None
-    profit_multiple: Optional[float] = None   # price / (12 x monthly_profit)
-    revenue_multiple: Optional[float] = None
+    profit_multiple: Optional[float] = None   # as the site prints it: "4.1x"
+    revenue_multiple: Optional[float] = None  # not on the card since 2026-09-29
     age_text: Optional[str] = None         # as Flippa writes it: "3 years"
     country: Optional[str] = None          # as Flippa writes it: "MI, United States"
-    status: Optional[str] = None           # "open", "won", ...
-    sale_method: Optional[str] = None      # "classified", "auction", "instant_sale"
-    bid_count: Optional[int] = None
-    broker_name: Optional[str] = None
-    managed_by_flippa: Optional[bool] = None
+    # status, sale_method, sponsored, editors_choice, confidential,
+    # verified_listing and image_url are not on the card since 2026-09-29 and
+    # are null on every row read since. Kept so a consumer's schema does not
+    # change; removing them is a separate decision.
+    status: Optional[str] = None
+    sale_method: Optional[str] = None
+    bid_count: Optional[int] = None        # "21 bids" on an auction card; else null
+    broker_name: Optional[str] = None      # the broker named on the card, if any
+    managed_by_flippa: Optional[bool] = None  # "Brokered by Flippa"
     sponsored: Optional[bool] = None
     editors_choice: Optional[bool] = None
     confidential: Optional[bool] = None

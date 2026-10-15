@@ -9,12 +9,10 @@ body:
         own report because the fix is different from a code bug: something on
         flippa.com moved.
 
-        Useful to know before filing: the parser reads **Flippa's own embedded
-        listing JSON first** (`const STATE = {...}` in the served HTML) and
-        falls back to the **rendered cards** (`<div id="listing-NNN">`). The
-        `price_source` column on every row says which one produced it —
-        `state`/`state+dom` for the JSON, `dom` for the cards — so a run's own
-        output narrows the fix before you look at anything.
+        Useful to know before filing: the parser reads the listing cards in
+        the served HTML (`<li id="listing-NNN">`) and the site's own result
+        count ("Show 676 results" in the filter panel). There is no
+        structured listing data on the page to fall back on.
 
   - type: dropdown
     id: what_broke
@@ -47,9 +45,9 @@ body:
         Whichever of these you can get. A capture beats a description.
 
         - Run with `--dump-html dump.html`, then:
-          `python3 -c "import product_parser as p; s=p.parse_state(open('dump.html').read()); print(bool(s), len(p.state_results(s)), p.state_total_results(s))"`
-          — that is (JSON found?, records, the site's own match count).
-        - Or paste one record of `STATE.results` from devtools.
+          `python3 -c "import product_parser as p; h=open('dump.html').read(); print(p.count_cards(h), p.results_count(h), len(p.parse_products(h, 'https://flippa.com/search')))"`
+          — that is (cards found, the site's own match count, rows parsed).
+        - Or paste the outer HTML of one listing card from devtools.
         - For a field problem: the value you got, and the value on the page.
       render: text
     validations:

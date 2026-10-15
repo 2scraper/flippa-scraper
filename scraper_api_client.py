@@ -9,17 +9,13 @@ its own**: it POSTs a URL to 2Captcha's Scraper API
 API the other three engines reach over `--cdp-endpoint`), gets HTML back over
 plain HTTPS, and feeds that HTML to the same product_parser.
 
-**On this site the browserless path is enough, and that is unusual.** Flippa
-embeds every listing on a page as `const STATE = {...}` in the HTML it serves,
-so the listing data is in the first response with no JavaScript executed —
-measured 2026-09-19, six plain HTTPS fetches (search, a category shortcut, a
-filtered search, page 2, a no-results query, a page past the end), 25 complete
-records each where the query had that many, from an ordinary datacentre
-address with no proxy and no key. An earlier version of this repo concluded
-the opposite ("does not currently work against /search, in any of three tested
-configurations") because it waited for a class that only appears once the
-Angular grid has PAINTED, and then timed out on a response that already had
-all 25 listings in it.
+**On this site the browserless path is enough, and that is unusual.** Flippa's
+search page is server-rendered: all 50 listing cards are in the first
+response with no JavaScript executed — measured 2026-10-14 with plain HTTPS
+fetches of /search, /fr/search, /es/search, a category shortcut, a filtered
+search and its pages 2, 14 and 15, and a no-results query, from an ordinary
+address with no proxy and no key. (Before the site's 2026-09-29 rebuild the
+same was true of an embedded JSON copy of the listings; it is now the cards.)
 
 So `--wait-element` and friends are available but not needed here, and
 `requirements.txt` alone is enough to run this engine.
@@ -271,9 +267,9 @@ def scrape(args) -> int:
                 stop_reason = "listing_exhausted"
                 break
             if page_num == 2:
-                # The same addressability check the browser engines run: this
-                # site publishes no next-page link, so the constructed URL is
-                # verified against the DATA before more pages are planned.
+                # The same addressability check the browser engines run: the
+                # constructed URL is verified against the DATA, not trusted,
+                # before more pages are planned.
                 addressable = any(p.sku and p.sku not in
                                   {q.sku for q in first_products if q.sku}
                                   for p in products)

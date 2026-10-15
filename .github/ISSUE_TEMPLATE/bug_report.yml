@@ -14,12 +14,11 @@ body:
 
         - **Zero listings, exit 4?** Check the run's `.meta.json`. If
           `total_results` is 0 the site itself says the query matches nothing,
-          which is an answer rather than a bug — Flippa returns five PROMOTED
-          listings alongside it, and this scraper deliberately does not report
-          them as matches.
-        - **25 rows from a multi-page run?** Check `stop_reason`. This site
-          publishes no next-page link, so pages after the first are
-          constructed; `pagination_not_addressable` means that convention has
+          which is an answer rather than a bug. If it is above 0 and the run
+          still found nothing, that is a site change: use the other template.
+        - **One page of rows from a multi-page run?** Check `stop_reason`.
+          Pages after the first are constructed (`?page=N`);
+          `pagination_not_addressable` means that convention has
           changed and the run stopped rather than reporting a complete result
           holding one page.
 

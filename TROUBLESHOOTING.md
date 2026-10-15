@@ -4,23 +4,29 @@ Ordered by how often each one actually happens. Every number here was measured
 on the date given, from an ordinary residential connection in Europe unless
 stated otherwise.
 
-## The run wrote 25 rows and I asked for 3 pages
+## The run wrote one page of rows and I asked for 3 pages
 
 Read `<out>.meta.json` first. If `stop_reason` is `pagination_not_addressable`,
 the run deliberately stopped: it fetched page 2, found nothing page 1 did not
 already have, and refused to report a complete-looking result holding one page.
 
-That is the check, not the bug. The bug it guards against is real and was in
-this repo: flippa.com's search is an Angular app whose own code **deletes** a
-bare `?page=` parameter, so `?page=2` used to land back on page 1, the run
-deduplicated the repeat away, and every "3-page" run returned exactly 25 rows
-and exit 0. The convention this repo uses instead comes from the site's own
-JavaScript:
+That is the check, not the bug. The bug it guards against was real in this
+repo: a page parameter the site ignored landed every page back on page 1, the
+run deduplicated the repeats away, and every "3-page" run returned one page
+and exit 0. The convention used now is the site's own next link (measured
+2026-10-14; `?page[number]=2` also still works):
 
-    ?page[number]=2        (URL-encoded: ?page%5Bnumber%5D=2)
+    ?page=2
 
 If you see `pagination_not_addressable` today, that convention has changed —
 please open a "Site changed" issue with the URL.
+
+## Exit 4 on every URL since late September 2026
+
+Flippa rebuilt its search page between 2026-09-28 and 2026-09-29. Versions of
+this repo before the release that followed read an embedded `const STATE`
+JSON block and `<div id="listing-N">` cards, neither of which exists any more,
+so every run parsed 0 listings. Upgrade.
 
 ## Exit 4, and the output file was not written
 
@@ -33,10 +39,11 @@ night's good data with `[]`. Check `total_results` in the sidecar:
   (a `"failed"` sidecar beside the previous run's good data would contradict
   it). The log line says which page failed and why.
 
-**A zero-match query still returns five listings**, and this scraper does not
-report them. Measured 2026-09-19: `?query[keyword]=<nonsense>` answers with
-`totalResults: 0` and the five promoted listings that lead the unfiltered
-search page. They are placements, not matches.
+The site's own count decides "matches nothing": `?query[keyword]=<nonsense>`
+answers "Show 0 results" with no cards (measured 2026-10-14). Before the
+2026-09-29 rebuild the same query also returned five promoted listings; the
+parser still reports nothing for a page whose count is 0, whatever cards it
+carries.
 
 ## Exit 2 — "the proxy exit … cannot be used"
 
@@ -57,10 +64,10 @@ the target may be what is slow.
 
 ## Exit 3 — blocked
 
-flippa.com sits behind Cloudflare. On 2026-09-19 it served the full search
-page to plain `curl` with an ordinary user agent, six times, with no proxy and
-no key — so exit 3 is not the normal state of affairs and is worth reading
-properly:
+flippa.com sits behind Cloudflare. On 2026-09-19 and again on 2026-10-14 it
+served the full search page to plain `curl` with an ordinary user agent, with
+no proxy and no key, and on 2026-10-14/15 to GitHub's runners — so exit 3 is
+not the normal state of affairs and is worth reading properly:
 
 * The log names the signal: an HTTP refusal status, a challenge marker, or
   "the response references Flippa's own assets N times". The last one is how
@@ -72,26 +79,27 @@ properly:
 
 ## The multiple does not match the numbers beside it
 
-`profit_multiple` is Flippa's own figure, not a computed one, and it does not
-always equal `price ÷ (12 × monthly_profit)`. Measured 2026-09-19 across 63
-listings that show a multiple: 53 agree within 0.15, 10 do not (one example:
-price $9,082, net profit $386/mo, Flippa's multiple 2.6, the computed figure
-1.96). The site appears to compute it over a different profit window, so this
-repo reports what the site publishes and does not "fix" it. It is a trap that
-looks like a parsing bug, which is why it is written down rather than asserted.
+`profit_multiple` is Flippa's own figure as printed on the card ("4.1x"), not a
+computed one. It need not equal `price ÷ (12 × monthly_profit)`: the card
+rounds the monthly profit to three significant figures, and on 2026-09-19,
+before the site's rebuild, 10 of 63 listings disagreed by more than 0.15 even
+with exact figures. This repo reports what the site publishes.
 
 ## monthly_profit is negative
 
-That is the listing, not the parser. Flippa writes a loss-making business's net
-profit as `-USD $315 p/mo`, and 2 of the 25 listings on the 2026-08-27 capture
-were negative. An earlier version of this parser returned `null` for exactly
-those rows.
+That is the listing, not the parser. Flippa writes a loss-making business's
+profit as `-USD $9` on the card. An earlier version of this parser returned
+`null` for exactly those rows.
 
-## profit_multiple and revenue_multiple are null on some rows
+## monthly_profit and monthly_revenue are round numbers
 
-The site shows no multiple for those listings (`show_multiple: false`), and its
-JSON carries `0.0` there. Reporting `0.0` would be a fabricated valuation, so
-the column is null. Measured 12 of 75 rows on 2026-09-19.
+The card prints them abbreviated — "USD $51.7K", "USD $1.23M" — so that is the
+precision there is. The asking price and the original price are printed in
+full and are exact.
+
+## profit_multiple is null on some rows
+
+The card shows no multiple for those listings, and none is invented.
 
 ## Selenium: SessionNotCreatedException against a Scraping Browser endpoint
 

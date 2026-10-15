@@ -7,6 +7,55 @@ means fixes, not that every flag is frozen. A behaviour-changing default in a
 patch release is announced at the top of its notes rather than discovered from
 a bill.
 
+## [Unreleased]
+
+> **Flippa rebuilt its search page between 2026-09-28 and 2026-09-29, and
+> every version up to 0.2.1 has returned 0 listings (exit 4) on every URL
+> since.** This release reads the new page. Rows now carry
+> `price_source: "dom"`; `monthly_profit` and `monthly_revenue` are the
+> card's abbreviated figures ("USD $51.7K", three significant figures) rather
+> than exact amounts; and `monetization`, `revenue_multiple`, `status`,
+> `sale_method`, `sponsored`, `editors_choice`, `confidential`,
+> `verified_listing` and `image_url` are null on every row, because the card
+> no longer shows them. The columns stay in the schema.
+
+### Fixed
+
+- **The parser reads the rebuilt search page.** Measured 2026-10-14 on the
+  canary's own capture and on plain-HTTP captures of `/search`, `/fr/search`,
+  `/es/search`, `/websites` and a filtered search: the embedded
+  `const STATE` JSON is gone (0 occurrences), cards are `<li id="listing-N">`
+  instead of `<div>`, listing links are `flippa.com/<id>-<slug>`, and a page
+  holds 50 listings, not 25. The card selector is now tag-agnostic and
+  excludes the filter counters that share its id prefix
+  (`listing-category-count-*`); prices are read from the card's price column
+  (asking, struck-through original, auction price and bid count), key data
+  from a label table for the three languages the site publishes, money in
+  either `USD $1,234` or `1 234 € (EUR)` form with `K`/`M` abbreviations.
+  An open-to-offers listing (a price-guide range) and a partial-equity sale
+  report no price, as the site prints none.
+- **Empty and past-the-end pages are read from the site's own count**
+  ("Show 676 results" in the filter panel): "Show 0 results" is an empty
+  query (exit 4), no cards with a count above zero is the end of the listing
+  (complete).
+- **Pagination uses `?page=N`**, the parameter of the site's own next link.
+  The old `?page[number]=N` still works and a URL carrying it is rewritten
+  rather than doubled. `PAGE_SIZE` is 50, so the per-page shortfall check
+  expects 50.
+- **The canary checks columns that every card carries** (title, type,
+  industry, country, age, monthly revenue: at least 95% non-null each) and
+  that no original price sits at or below its price, instead of the share of
+  rows cross-checked against the embedded JSON, which no longer exists. Row
+  floor 120 of 150.
+
+Verified 2026-10-15: a live Playwright run of
+`?filter[property_type]=saas`, `--pages 3`, from a datacentre address with no
+proxy and no key — 150 listings, `status: complete`, `addressable: true`,
+exit 0; the canary's assertion block passes on that run's output and fails
+when a column is planted null. `sample_output.*` is cut from that run (broker
+names redacted). The pyppeteer, Selenium and Scraper API engines share the
+parser but were not re-run live.
+
 ## [0.2.1] — 2026-09-29
 
 ### Fixed
