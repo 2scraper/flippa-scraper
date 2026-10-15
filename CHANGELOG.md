@@ -9,6 +9,8 @@ a bill.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-15
+
 > **Flippa rebuilt its search page between 2026-09-28 and 2026-09-29, and
 > every version up to 0.2.1 has returned 0 listings (exit 4) on every URL
 > since.** This release reads the new page. Rows now carry
