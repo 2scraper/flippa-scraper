@@ -130,6 +130,16 @@ Install exactly one engine per environment: playwright and pyppeteer pin
 incompatible `pyee` versions, and pyppeteer and selenium collide on
 `urllib3`. Use a virtualenv per engine if you want more than one.
 
+**The pyppeteer engine carries a known-vulnerable urllib3.** pyppeteer
+requires `urllib3<2`, and seven published urllib3 advisories (as of
+2026-10-15) are fixed only in 2.x — among them one where a cross-origin
+redirect can forward `Proxy-Authorization` to the new host
+(GHSA-qccp-gfcp-xxvc), and one where the TLS settings meant for an HTTPS
+proxy and for the target server can be mixed up (PYSEC-2026-4175). In that
+engine's virtualenv `requests` uses the same urllib3, so the proxy preflight
+and the captcha API calls do too. The weekly `pip-audit` job ignores exactly
+those seven, by ID; prefer Playwright if you run with proxy credentials.
+
 Credentials live in `.env`, never on a command line — a secret in `argv` is
 readable by anything that can run `ps` and lands in shell history:
 

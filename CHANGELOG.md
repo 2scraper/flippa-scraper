@@ -99,6 +99,11 @@ parser but were not re-run live.
 - Public files no longer cite private instruction files by section number;
   the rules are stated in this repository's own words, and a suite check
   keeps it that way.
+- The weekly `pip-audit` job had been red since 2026-10-05 on two new urllib3
+  1.x advisories (PYSEC-2026-4175, PYSEC-2026-4177) in the pyppeteer lock.
+  pyppeteer 2.0.0 still requires `urllib3<2` and the fix is only in 2.8.0, so
+  they are ignored by ID beside the five already listed, and the README says
+  so.
 
 ## [0.2.1] — 2026-09-29
 
