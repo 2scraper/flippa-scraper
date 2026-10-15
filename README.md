@@ -130,6 +130,16 @@ Install exactly one engine per environment: playwright and pyppeteer pin
 incompatible `pyee` versions, and pyppeteer and selenium collide on
 `urllib3`. Use a virtualenv per engine if you want more than one.
 
+**The pyppeteer engine carries a known-vulnerable urllib3.** pyppeteer
+requires `urllib3<2`, and seven published urllib3 advisories (as of
+2026-10-15) are fixed only in 2.x — among them one where a cross-origin
+redirect can forward `Proxy-Authorization` to the new host
+(GHSA-qccp-gfcp-xxvc), and one where the TLS settings meant for an HTTPS
+proxy and for the target server can be mixed up (PYSEC-2026-4175). In that
+engine's virtualenv `requests` uses the same urllib3, so the proxy preflight
+and the captcha API calls do too. The weekly `pip-audit` job ignores exactly
+those seven, by ID; prefer Playwright if you run with proxy credentials.
+
 Credentials live in `.env`, never on a command line — a secret in `argv` is
 readable by anything that can run `ps` and lands in shell history:
 
@@ -200,8 +210,8 @@ same situation.
 | 1 | crash |
 | 2 | bad usage, including an exit that fails its preflight — one small request through the proxy before any browser starts, so a rotated password costs a second rather than three minutes of timeouts |
 | 3 | blocked before parsing — a challenge, a refusal status, or a page not built out of Flippa's own assets |
-| 4 | ran fine, zero listings (including "the site says this query matches nothing") |
-| 5 | the remote API failed (`scraper_api_client.py`) |
+| 4 | zero listings, and the run can show the listing is empty: the site says the query matches nothing, or the listing ran out |
+| 5 | zero listings because the content was never obtained: a remote API error, a navigation timeout, a dead proxy, a page that never painted, or a page of listings the parser could not read |
 | 6 | partial: some pages were gathered, then the run stopped early |
 
 Every run that writes output also writes `<out>.meta.json`. Two fields there

@@ -1628,7 +1628,7 @@ def check_output_contract():
 
 
 # ---------------------------------------------------------------------------
-# 5. The engines: parity, and the five checks §17 says to steal
+# 5. The engines: parity, signatures, undefined names and imports
 # ---------------------------------------------------------------------------
 # The flag contract every engine in the family exposes, as
 # argparse destinations. Asserted in BOTH directions: a missing flag fails,
@@ -1855,6 +1855,40 @@ def check_banned_wording():
         text = open(readme, encoding="utf-8").read()
         check("the README names the Scraping Browser API",
               "Scraping Browser API" in text)
+
+
+def check_no_private_citations():
+    print("\n[no citations of private instruction files]")
+    # The rules this repo follows are stated in its own words. A pointer into
+    # a file the public cannot open ("see section N of the template") reads as
+    # a reference nobody can follow. Assembled from pieces so this file does
+    # not match itself; covers this file too, and dotfiles like .gitignore.
+    section = chr(0xA7)
+    patterns = [re.compile(re.escape(section) + r"\s*\d"),
+                re.compile(re.escape("CLAUDE" + ".md"), re.I),
+                re.compile(re.escape("claude_" + "2scraper"), re.I),
+                re.compile(re.escape("2scraper_" + "repo_rules"), re.I),
+                re.compile(r"\b(?:play" + r"book|family temp" + r"late)\b", re.I)]
+    scanned, hits = 0, []
+    for root, dirs, files in os.walk(REPO):
+        dirs[:] = [d for d in dirs
+                   if d not in {".git", "__pycache__", "captures", "legacy"}
+                   and not os.path.isfile(os.path.join(root, d, "pyvenv.cfg"))]
+        for filename in files:
+            if not filename.endswith((".py", ".md", ".yml", ".yaml", ".txt",
+                                      ".example", ".toml", ".cfg")) \
+                    and filename not in (".gitignore", ".dockerignore", "Dockerfile"):
+                continue
+            path = os.path.join(root, filename)
+            text = open(path, encoding="utf-8", errors="replace").read()
+            scanned += 1
+            for pattern in patterns:
+                m = pattern.search(text)
+                if m:
+                    line = text[:m.start()].count("\n") + 1
+                    hits.append(f"{os.path.relpath(path, REPO)}:{line}")
+    check(f"no shipped file cites a private instruction file ({scanned} files "
+          f"scanned)" + (f" — {hits}" if hits else ""), not hits and scanned > 10)
 
 
 def check_removed_flags_stay_removed():
@@ -2210,7 +2244,7 @@ def check_credentialled_paths_run():
         if "in.php" in url:
             return _FakeResponse({"status": 1, "request": "ID1"})
         if "tasks/sync" in url:
-            return _FakeResponse({"status": 200, "body": PAGE_FIXTURE_HTML},
+            return _FakeResponse({"status": "ok", "http_code": 200, "body": PAGE_FIXTURE_HTML},
                                  headers={"x-debug": "cost=0.0005"})
         raise AssertionError(url)
 
@@ -2610,7 +2644,247 @@ def check_writes_are_atomic():
         eq("and no temporary file behind", leftovers, [])
 
 
+def check_zero_rows_exit_codes():
+    """0 rows is 'empty' (4) only when something PROVES the listing empty."""
+    print("\n[zero-row exit codes]")
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(reason, blocked=False):
+            with redirect_stdout(io.StringIO()):
+                return finish_run([], os.path.join(tmp, "z"), "both", False,
+                                  blocked=blocked, stop_reason=reason,
+                                  pages_requested=1, pages_completed=0,
+                                  start_url="u", final_url="u")
+        # Previously every one of these returned 4, "the catalogue is empty",
+        # for a run that never saw the catalogue.
+        for reason in ("content_unparsed", "page_never_painted",
+                       "page_load_timeout", "worker_lost_page", "api_error",
+                       "a_reason_added_later"):
+            eq(f"0 rows after {reason!r} is exit 5, content never obtained",
+               run(reason), output_writer.EXIT_CONTENT_NOT_OBTAINED)
+        for reason in ("no_results", "listing_exhausted", "no_new_listings"):
+            eq(f"0 rows after {reason!r} is exit 4, a genuinely empty listing",
+               run(reason), EXIT_NO_PRODUCTS)
+        eq("a block outranks both", run("page_load_timeout", blocked=True),
+           EXIT_BLOCKED)
+        eq("and nothing is written for any of them", sorted(os.listdir(tmp)), [])
+        with redirect_stdout(io.StringIO()):
+            rc = finish_run([_row(sku="1")], os.path.join(tmp, "p"), "json",
+                            False, blocked=False, stop_reason="page_load_timeout",
+                            pages_requested=2, pages_completed=1,
+                            start_url="u", final_url="u")
+        eq("rows, then a failure, is still exit 6", rc, EXIT_PARTIAL)
+    eq("the engines' remote-API code is the same number",
+       output_writer.EXIT_API_ERROR, 5)
+
+
+def check_output_file_modes():
+    """Outputs get the mode a plain open() would give them, not mkstemp's 0600."""
+    print("\n[output file modes]")
+    if os.name != "posix":
+        skip("output file modes", "not a POSIX system")
+        return
+    old = os.umask(0o022)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            for umask, want in ((0o022, 0o644), (0o002, 0o664), (0o077, 0o600)):
+                os.umask(umask)
+                path = os.path.join(tmp, f"new_{umask:o}.json")
+                output_writer.write_json([_row(sku="1")], path)
+                eq(f"a new file under umask {umask:03o} is {want:o}",
+                   oct(os.stat(path).st_mode & 0o777), oct(want))
+            os.umask(0o022)
+            path = os.path.join(tmp, "existing.csv")
+            open(path, "w").close()
+            os.chmod(path, 0o664)
+            output_writer.write_csv([_row(sku="1")], path)
+            eq("an existing file keeps its own mode (0664 under umask 022)",
+               oct(os.stat(path).st_mode & 0o777), oct(0o664))
+            with redirect_stdout(io.StringIO()):
+                output_writer.write_run_meta(os.path.join(tmp, "run"), {"a": 1})
+            eq("the sidecar is not owner-only either",
+               oct(os.stat(os.path.join(tmp, "run.meta.json")).st_mode & 0o777),
+               oct(0o644))
+    finally:
+        os.umask(old)
+
+
+def check_csv_escape_count_reaches_the_sidecar():
+    print("\n[csv escapes are declared]")
+    eq("a leading newline is neutralised too",
+       output_writer.csv_safe("\nfoo"), "'\nfoo")
+    with tempfile.TemporaryDirectory() as tmp:
+        prefix = os.path.join(tmp, "run")
+        with redirect_stdout(io.StringIO()):
+            finish_run([_row(sku="1", title='=HYPERLINK("x")', description="@me"),
+                        _row(sku="2", title="plain")], prefix, "both", False,
+                       blocked=False, stop_reason="completed",
+                       pages_requested=1, pages_completed=1,
+                       start_url="u", final_url="u")
+        meta = json.load(open(prefix + ".meta.json", encoding="utf-8"))
+        eq("the sidecar counts the escaped CSV cells", meta.get("csv_cells_escaped"), 2)
+        rows = json.load(open(prefix + ".json", encoding="utf-8"))
+        eq("and the JSON keeps the site's own bytes", rows[0]["title"],
+           '=HYPERLINK("x")')
+        eq("a run field is never overwritten by the count",
+           meta.get("status"), "complete")
+
+
+def _engine_sources():
+    return {name: open(os.path.join(REPO, name + ".py"), encoding="utf-8").read()
+            for name in ("playwright_scraper", "puppeteer_scraper", "selenium_scraper")}
+
+
+def check_one_solve_allowance_per_page():
+    """Every paid solve goes through the page's one SolveBudget."""
+    print("\n[captcha solve budget]")
+    budget = page_flow.SolveBudget()
+    eq("the first solve is allowed", budget.spend(), True)
+    eq("the second is refused, whatever retry or exit asks for it",
+       budget.spend(), False)
+    eq("the allowance is one per page", page_flow.SOLVES_PER_PAGE, 1)
+    # Read off disk, never behind an import: an import-gated version of this
+    # check would skip for exactly the engines whose driver is absent.
+    for name, src in _engine_sources().items():
+        tree = ast.parse(src)
+        funcs = {n.name: n for n in ast.walk(tree)
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        handler = funcs.get("handle_captcha_if_present")
+        check(f"{name}: has handle_captcha_if_present", handler is not None)
+        if handler is None:
+            continue
+        # The guard must be exactly `if not budget.spend(): return ...`
+        # ahead of the solver call — a mention of budget.spend() that does
+        # not gate the purchase is not a budget.
+        def _is_guard(node):
+            t = node.test
+            return (isinstance(node, ast.If) and isinstance(t, ast.UnaryOp)
+                    and isinstance(t.op, ast.Not) and isinstance(t.operand, ast.Call)
+                    and getattr(t.operand.func, "attr", None) == "spend"
+                    and getattr(t.operand.func.value, "id", None) == "budget"
+                    and any(isinstance(b, ast.Return) for b in node.body))
+        guards = [n.lineno for n in ast.walk(handler)
+                  if isinstance(n, ast.If) and _is_guard(n)]
+        solves = [n.lineno for n in ast.walk(handler) if isinstance(n, ast.Call)
+                  and getattr(n.func, "id", None) == "solve"]
+        check(f"{name}: the budget is claimed BEFORE the solver is called",
+              bool(guards) and bool(solves) and min(guards) < min(solves))
+        calls = [c for c in ast.walk(tree) if isinstance(c, ast.Call)
+                 and getattr(c.func, "id", getattr(c.func, "attr", None))
+                 == "handle_captcha_if_present"]
+        check(f"{name}: every call site passes the page's budget "
+              f"({len(calls)} call(s))",
+              calls and all(len(c.args) >= 3 and getattr(c.args[2], "id", None)
+                            == "budget" for c in calls))
+        fetch = funcs.get("_fetch_one_page")
+        fetch_src = ast.get_source_segment(src, fetch) if fetch else ""
+        before_loop = fetch_src.split("for block_attempt")[0]
+        check(f"{name}: the budget is created once per page, outside the "
+              f"retry/rotation loop",
+              "page_flow.SolveBudget()" in before_loop)
+
+
+def check_status_reaches_the_classifier():
+    print("\n[HTTP status reaches the classifier]")
+    for name, src in _engine_sources().items():
+        tree = ast.parse(src)
+        calls = [c for c in ast.walk(tree) if isinstance(c, ast.Call)
+                 and isinstance(c.func, ast.Attribute) and c.func.attr == "classify"
+                 and getattr(c.func.value, "id", None) == "page_flow"]
+        bound = [c for c in calls if any(k.arg == "status_code" for k in c.keywords)
+                 or len(c.args) >= 2]
+        check(f"{name}: every page_flow.classify call is given a status "
+              f"({len(bound)} of {len(calls)})", calls and len(bound) == len(calls))
+        if name != "selenium_scraper":
+            check(f"{name}: the status is read from what goto() returned",
+                  "response.status" in src)
+    eq("a refusal status with no listing on the page is blocked",
+       page_flow.classify("<html><body>Error</body></html>", status_code=403).state,
+       page_flow.BLOCKED)
+
+
+def check_scraper_api_payload_and_logging():
+    print("\n[Scraper API payload]")
+    import scraper_api_client as sac
+
+    class Args:
+        wait_text = wait_element = None
+        wait_state = "load"
+        cdp_url = None
+        timeout = 60
+        key = "k"
+
+    wait_for = sac._build_wait_for(Args())
+    eq("waitFor is an object, not a JSON string", wait_for, {"state": "load"})
+    sent, records = {}, []
+
+    class Resp:
+        status_code = 200
+        headers = {"x-debug": "cost=0.0005 key=0123456789abcdef0123456789abcdef"}
+        text = ""
+
+        def json(self):
+            return {"status": "warn", "http_code": 403, "body": "<html></html>"}
+
+    def fake_post(url, **kw):
+        sent.update(kw["json"])
+        return Resp()
+
+    class Grab(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = Grab()
+    sac.logger.addHandler(handler)
+    level = sac.logger.level
+    sac.logger.setLevel(logging.INFO)
+    real = sac.requests.post
+    sac.requests.post = fake_post
+    try:
+        html, upstream = sac.fetch_html(Args(), "https://flippa.com/search")
+    finally:
+        sac.requests.post = real
+        sac.logger.removeHandler(handler)
+        sac.logger.setLevel(level)
+    check("the payload carries the object form",
+          isinstance(sent.get("waitFor"), dict))
+    eq("the target's status is read from http_code, not the verdict string",
+       upstream, 403)
+    logged = " ".join(records)
+    check("the x-debug header is logged redacted",
+          "x-debug" in logged and "0123456789abcdef0123456789abcdef" not in logged)
+
+
+def check_credential_scan_uses_relative_paths():
+    print("\n[credential scan: relative paths]")
+    import importlib.util
+    path = os.path.join(REPO, ".github", "ci_checks.py")
+    if not os.path.exists(path):
+        skip("credential scan paths", "no .github/ci_checks.py in this tree")
+        return
+    spec = importlib.util.spec_from_file_location("ci_checks_paths", path)
+    ci = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ci)
+    import pathlib
+    with tempfile.TemporaryDirectory() as tmp:
+        # A clone whose ANCESTOR is called like a skipped directory.
+        repo = pathlib.Path(tmp) / "legacy" / "clone"
+        repo.mkdir(parents=True)
+        (repo / "leak.py").write_text("KEY = '" + "ab" * 16 + "'\n")
+        ci.REPO = repo
+        ci._VENV_CACHE.clear()
+        with redirect_stdout(io.StringIO()):
+            failures = ci.secret_check()
+        check("a key in a clone under a 'legacy' ancestor is still found",
+              any("leak.py" in f for f in failures))
+        (repo / "leak.py").unlink()
+        with redirect_stdout(io.StringIO()):
+            failures = ci.secret_check()
+        check("a scan that read 0 files fails instead of printing ok",
+              any("0 files" in f for f in failures))
+
+
 def check_cli_refuses_impossible_values():
+
     """Bounds on the flags whose out-of-range values change what a run means."""
     print("\n[cli bounds]")
     import argparse as _argparse
@@ -2850,14 +3124,35 @@ def check_fingerprint_refusal_is_an_api_error():
     if ENGINES.get("playwright_scraper") is None:
         skip("fingerprint refusal", "playwright not installed")
         return
+    # The run launches Chromium before it asks for a fingerprint, so without
+    # a browser binary it dies at launch (exit 1) and this check would be
+    # measuring the machine, not the code. CI installs the browser.
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            browser_path = pw.chromium.executable_path
+    except Exception as e:  # noqa: BLE001
+        browser_path = None
+        print(f"        (could not ask Playwright for its browser: {e})")
+    if not browser_path or not os.path.exists(browser_path):
+        skip("fingerprint refusal", "no Chromium binary for this Playwright "
+             "(run `playwright install chromium`)")
+        return
     import subprocess
     example = open(os.path.join(REPO, ".env.example"), encoding="utf-8").read()
     url = re.search(r"^[A-Z]+_URL=(https?://\S+)", example, re.M).group(1)
     fake_key = "f" + "a" * 31
-    env = dict(os.environ, HTTPS_PROXY="http://127.0.0.1:9",
-               HTTP_PROXY="http://127.0.0.1:9",
-               **{name: "" for name in env_config.ENV_KEYS})
     with tempfile.TemporaryDirectory() as tmp:
+        # A private HOME: the fingerprint client caches on disk under
+        # ~/.cache, and a developer's cached fingerprint would answer this run
+        # instead of the (unreachable) API — the run then goes on to the
+        # dead proxy and the check measures that. The browser path is kept.
+        env = dict(os.environ, HTTPS_PROXY="http://127.0.0.1:9",
+                   HTTP_PROXY="http://127.0.0.1:9", HOME=tmp,
+                   PLAYWRIGHT_BROWSERS_PATH=os.environ.get(
+                       "PLAYWRIGHT_BROWSERS_PATH",
+                       os.path.join(os.path.expanduser("~"), ".cache", "ms-playwright")),
+                   **{name: "" for name in env_config.ENV_KEYS})
         run = subprocess.run(
             [sys.executable, os.path.join(REPO, "playwright_scraper.py"),
              "--url", url, "--pages", "1",
@@ -2899,7 +3194,7 @@ def check_family_sync_2026_09_29():
                        capture_output=True, text=True)
     check("`env_config.py --help` answers without reading .env",
           r.returncode == 0 and ".env file:" not in r.stdout)
-    # 4. The Scraping Browser connect policy (template §26): retry a lock or
+    # 4. The Scraping Browser connect policy: retry a lock or
     #    an outage, never an expired login, and say which it was.
     eq("a 500 on the upgrade is retried", proxy_pool.cdp_retryable(
         "WebSocket error: ws://***:***@cb.2captcha.com:9222/ 500 Internal Server Error"), True)
@@ -3051,7 +3346,8 @@ def main() -> int:
                   check_readiness_wait_is_csp_safe,
                   check_engine_imports_driver_at_module_level,
                   check_no_undefined_names, check_shared_calls_bind,
-                  check_banned_wording, check_removed_flags_stay_removed,
+                  check_banned_wording, check_no_private_citations,
+                  check_removed_flags_stay_removed,
                   check_env_example_matches_code, check_env_precedence,
                   check_policy_constants_have_consumers,
                   check_dockerfile_copies_what_it_imports, check_sample_output,
@@ -3062,7 +3358,13 @@ def main() -> int:
                   check_concurrency_machinery,
                   check_worker_pools_start_on_different_exits,
                   check_run_integrity, check_csv_is_not_a_formula,
-                  check_writes_are_atomic,
+                  check_writes_are_atomic, check_zero_rows_exit_codes,
+                  check_output_file_modes,
+                  check_csv_escape_count_reaches_the_sidecar,
+                  check_one_solve_allowance_per_page,
+                  check_status_reaches_the_classifier,
+                  check_scraper_api_payload_and_logging,
+                  check_credential_scan_uses_relative_paths,
                   check_cli_refuses_impossible_values,
                   check_diff_refuses_a_window_comparison,
                   check_captcha_javascript_actually_runs,

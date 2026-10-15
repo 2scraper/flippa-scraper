@@ -98,8 +98,8 @@ _VENV_CACHE = {}
 def _is_in_virtualenv(path):
     """True if any ancestor of `path` under REPO is a virtualenv root.
 
-    A directory holding `pyvenv.cfg` IS a virtualenv, whatever it is called
-    (family template §23). The name set in SKIP_DIRS missed CI's own
+    A directory holding `pyvenv.cfg` IS a virtualenv, whatever it is called.
+    The name set in SKIP_DIRS missed CI's own
     `.venv-<engine>`, so the engine jobs scanned pip's and selenium's vendored
     code and failed on it — hidden until pipefail made that job's exit status
     real (2026-09-29).
@@ -119,7 +119,10 @@ def scanned_files():
     for path in sorted(REPO.rglob("*")):
         if not path.is_file() or path.suffix not in SCANNED_SUFFIXES:
             continue
-        if any(part in SKIP_DIRS for part in path.parts):
+        # RELATIVE parts only. Matching the absolute path made a clone under
+        # any ancestor named like a skipped directory (…/legacy/flippa-scraper,
+        # …/venv/…) skip every file and print "ok, 0 files scanned".
+        if any(part in SKIP_DIRS for part in path.relative_to(REPO).parts):
             continue
         if _is_in_virtualenv(path):
             continue
@@ -212,6 +215,9 @@ def secret_check():
                 line_no = text[:match.start()].count("\n") + 1
                 failed.append(f"{rel}:{line_no} contains {what}")
 
+    if scanned == 0:
+        failed.append("the credential scan read 0 files — it is looking in the "
+                      "wrong place, and 'nothing found' would mean nothing")
     if not failed:
         print(f"ok       {scanned} files scanned, nothing credential-shaped, "
               f"no session material, no personal data")

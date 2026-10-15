@@ -64,7 +64,8 @@ import page_flow
 from captcha_solver import (INJECT_TOKEN_FN, detect_in_html, detect_in_page,
                             reconcile_detections, solve)
 from fingerprint_client import FingerprintError
-from output_writer import failure_stop_reason, finish_run, merge_pages
+from output_writer import (EXIT_API_ERROR, failure_stop_reason, finish_run,
+                           merge_pages)
 from product_parser import (SELECTORS, category_from_url, locale_from_url,
                             page_url, parse_products)
 from proxy_pool import (CDP_CONNECT_ATTEMPTS, CDP_CONNECT_PAUSE_S, CDP_CONNECT_TIMEOUT_S,
@@ -82,8 +83,6 @@ ITEM_CARD_SELECTOR = SELECTORS["item_card"]
 # match resolves on the first thing that looks like a card long before the
 # grid paints. Flippa serves 50 per page, so 5 is comfortably below a full
 # page and safely above an accident.
-# The family's remote-API exit code; scraper_api_client.py defines the same.
-EXIT_API_ERROR = 5
 MIN_CARD_MATCHES = 5
 # How long to wait for the grid to paint. Not a precondition for data (see the
 # module docstring) — it buys the DOM cross-check.
@@ -216,7 +215,7 @@ def _connect_remote(pw, args):
     # message is a log.
     #
     # Retried per proxy_pool's CDP policy: a profile stays locked for ~2 s
-    # after a clean disconnect (family template §26), so a run started right
+    # after a clean disconnect (measured 2026-09-24), so a run started right
     # after another met HTTP 500. A 401 (expired credentials) is not retried.
     for attempt in range(1, CDP_CONNECT_ATTEMPTS + 1):
         try:
@@ -343,8 +342,13 @@ def _wait_for_cards(page, timeout_ms: int = RENDER_WAIT_MS) -> int:
     return count
 
 
-def handle_captcha_if_present(page, args) -> None:
+def handle_captcha_if_present(page, args, budget: page_flow.SolveBudget,
+                              status_code: Optional[int] = None) -> bool:
     """Runs after EVERY navigation, for ANY page — not scoped to one URL.
+
+    Every purchase goes through `budget`, the page's one allowance, checked
+    before the solver is called. Returns True when the page was reloaded, so
+    the caller knows the status it holds belongs to the previous document.
 
     Both detectors run and are reconciled; neither short-circuits the other.
     A challenge configured in JavaScript never appears in the served markup,
@@ -352,24 +356,24 @@ def handle_captcha_if_present(page, args) -> None:
     """
     html = _content_when_settled(page)
     if html is None:
-        return
+        return False
     challenge = reconcile_detections(
         detect_in_html(html, page.url),
         detect_in_page(lambda js: page.evaluate(js), page_url=page.url))
     if not challenge:
-        return
+        return False
 
     # Detected is not blocking. Flippa renders Turnstile on its account forms,
     # not on listings, so a detection on a page whose listings are already
     # here guards nothing. Counting what is already on the page is instant —
     # no readiness wait — which is why this check can sit here rather than
     # forcing a 15s wait on a page a captcha genuinely gates.
-    state = page_flow.classify(html, url=page.url)
+    state = page_flow.classify(html, status_code=status_code, url=page.url)
     if args.solve_captcha == "when-blocked" and not state.policy.may_solve:
         logger.info("%s detected via %s, but the page is %s — not paying to "
                     "solve it. Pass --solve-captcha always to solve anyway.",
                     challenge.kind, challenge.source, state)
-        return
+        return False
 
     logger.warning("%s detected via %s (sitekey=%s) — attempting to solve.",
                    challenge.kind, challenge.source, challenge.sitekey)
@@ -381,14 +385,19 @@ def handle_captcha_if_present(page, args) -> None:
         logger.warning("No 2captcha API key, so this challenge cannot be solved "
                        "— continuing with whatever the page already holds. The "
                        "run reports exit 3 if it really was blocking.")
-        return
+        return False
+    if not budget.spend():
+        logger.warning("%s still present, but this page has already used its "
+                       "%d paid solve(s) — not buying another.",
+                       challenge.kind, budget.limit)
+        return False
     try:
         token = solve(challenge, args.twocaptcha_key,
                       api_version=args.captcha_api, min_score=args.min_score)
     except Exception as e:  # noqa: BLE001 — a solver failure is not a crash
         logger.error("Solving the challenge failed (%s) — continuing with "
                      "whatever the page holds.", redact_secret_patterns(str(e)))
-        return
+        return False
 
     page.evaluate(INJECT_TOKEN_FN, token)
     if state.policy.blocked:
@@ -398,6 +407,7 @@ def handle_captcha_if_present(page, args) -> None:
         logger.info("Token injected. Reloading page to continue.")
         page.wait_for_timeout(1500)
         page.reload(wait_until="domcontentloaded", timeout=60000)
+        return True
     else:
         # Measured on 2026-09-19 against flippa.com/signup, which carries a
         # real Turnstile: reloading here THROWS THE TOKEN AWAY, because a form
@@ -409,6 +419,7 @@ def handle_captcha_if_present(page, args) -> None:
                     "This page was not blocked, so it is NOT reloaded — a "
                     "reload would discard the token, and nothing here submits "
                     "a form.")
+        return False
 
 
 def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome:
@@ -428,13 +439,20 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # same address just burns it further.
     block_retries = args.proxy_block_retries if (pool and len(pool) > 1) else 0
     html, state, load_failed = None, None, False
+    # One allowance for the whole page: not per attempt, not per exit.
+    budget = page_flow.SolveBudget()
 
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d/%d: %s", page_num, args.pages, url)
-        load_failed, exit_failed = False, None
+        load_failed, exit_failed, status = False, None, None
         for attempt in range(1, args.retries + 1):
             try:
-                session.page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                response = session.page.goto(url, wait_until="domcontentloaded",
+                                             timeout=60000)
+                # The HTTP status is the one signal a refusal page with no
+                # vendor marker gives; page_flow reads it only when the page
+                # carries no listings.
+                status = response.status if response is not None else None
                 load_failed = False
                 break
             except (PWTimeout, PWError) as e:
@@ -469,10 +487,11 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         if load_failed:
             break
 
-        handle_captcha_if_present(session.page, args)
+        if handle_captcha_if_present(session.page, args, budget, status):
+            status = None   # the reload replaced the document it described
         cards = _wait_for_cards(session.page)
         html = _content_when_settled(session.page) or ""
-        state = page_flow.classify(html, url=session.page.url)
+        state = page_flow.classify(html, status_code=status, url=session.page.url)
         logger.info("Page %d is %s (%d card(s) rendered).", page_num, state, cards)
 
         if state.state == page_flow.UNPAINTED and state.policy.wait_first:
@@ -481,7 +500,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             # before deciding.
             session.page.wait_for_timeout(RENDER_WAIT_MS)
             html = _content_when_settled(session.page) or html
-            state = page_flow.classify(html, url=session.page.url)
+            state = page_flow.classify(html, status_code=status, url=session.page.url)
             logger.info("After waiting, page %d is %s.", page_num, state)
 
         if not state.policy.rotate_exit:
@@ -990,8 +1009,11 @@ if __name__ == "__main__":
                      "uses the same key, though it is a separate subscription).")
         sys.exit(2)
     if args.fingerprint and args.cdp_endpoint:
-        logger.warning("--fingerprint is ignored with --cdp-endpoint: the Scraping "
-                       "Browser supplies its own.")
+        logger.error("--fingerprint cannot be used with --cdp-endpoint: the "
+                     "Scraping Browser supplies its own device identity, and "
+                     "stacking a second one contradicts it rather than "
+                     "covering it.")
+        sys.exit(2)
     try:
         sys.exit(scrape(args))
     except ProxyError as e:

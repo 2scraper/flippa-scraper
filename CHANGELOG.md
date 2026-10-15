@@ -19,6 +19,21 @@ a bill.
 > `verified_listing` and `image_url` are null on every row, because the card
 > no longer shows them. The columns stay in the schema.
 
+> **Behaviour changes.**
+> - A run that ends with **zero listings because it never obtained the
+>   content** — a navigation timeout, a page that never painted, a page of
+>   listings the parser could not read, a lost worker, a Scraper API error —
+>   now exits **5**, not **4**. Exit 4 is kept for a listing the run can show
+>   is empty (the site says it matches nothing, or the listing ran out). A
+>   pipeline that treated 4 as "nothing listed today" was being told that
+>   about runs that never saw the listing.
+> - Output files and the `.meta.json` sidecar are created with the mode a
+>   plain `open()` would give them (`0o666` minus the umask) instead of
+>   `0600`, and an existing file keeps its mode.
+> - `--fingerprint` is now refused (exit 2) by the pyppeteer and Selenium
+>   engines, and by the Playwright engine together with `--cdp-endpoint`,
+>   where it used to be accepted with a warning and ignored.
+
 ### Fixed
 
 - **The parser reads the rebuilt search page.** Measured 2026-10-14 on the
@@ -56,6 +71,40 @@ when a column is planted null. `sample_output.*` is cut from that run (broker
 names redacted). The pyppeteer, Selenium and Scraper API engines share the
 parser but were not re-run live.
 
+- **One paid captcha solve per page.** Every engine now routes its solve
+  through a per-page allowance (`page_flow.SolveBudget`, limit
+  `SOLVES_PER_PAGE = 1`) checked before the solver is called and not reset by
+  a retry or an exit rotation. Measured with a stubbed solver and a page that
+  is always a Cloudflare interstitial: a three-exit pool bought 3 solves for
+  one page before, 1 after.
+- **The HTTP status reaches the page classifier** in the Playwright and
+  pyppeteer engines (from what `goto()` returns), so a refusal page with no
+  vendor marker is classified by its status. Selenium exposes no status and
+  passes none, explicitly. The Scraper API client reads the target's status
+  from `http_code`; `status` is the API's own verdict string.
+- **Scraper API `waitFor` is sent as an object.** The JSON-string form is
+  answered with HTTP 422 and still billed. `waitFor.state` is checked against
+  `load` / `domcontentloaded`.
+- **The Scraper API's `x-debug` header is redacted** before it is logged.
+- **CSV formula guard**: a cell starting with a line feed is escaped too, and
+  the sidecar records `csv_cells_escaped` — how many CSV cells differ from
+  the JSON because of it.
+- **The credential scan** matches its skipped directories against paths
+  RELATIVE to the repository, so a clone under an ancestor called `legacy`,
+  `captures` or `venv` is no longer skipped whole, and a scan that reads 0
+  files now fails instead of printing "ok".
+- **A suite check needed a browser binary and a clean `~/.cache`**: the
+  fingerprint-refusal check now skips when Playwright has no Chromium, and
+  runs with a private HOME so a cached fingerprint cannot answer it.
+- Public files no longer cite private instruction files by section number;
+  the rules are stated in this repository's own words, and a suite check
+  keeps it that way.
+- The weekly `pip-audit` job had been red since 2026-10-05 on two new urllib3
+  1.x advisories (PYSEC-2026-4175, PYSEC-2026-4177) in the pyppeteer lock.
+  pyppeteer 2.0.0 still requires `urllib3<2` and the fix is only in 2.8.0, so
+  they are ignored by ID beside the five already listed, and the README says
+  so.
+
 ## [0.2.1] — 2026-09-29
 
 ### Fixed
@@ -84,7 +133,7 @@ success.
   step's exit status real, all three engine jobs went red on the secret
   scan: it walked into CI's own `.venv-<engine>` and read pip's and
   selenium's vendored code as credentials. The scan now skips any directory
-  holding `pyvenv.cfg`, whatever it is called (template §23), and still
+  holding `pyvenv.cfg`, whatever it is called, and still
   reads ordinary untracked files — both planted in a check.
 - **The Playwright engine job never had a browser**, so the suite's
   fingerprint-refusal check — which starts Chromium before it fetches —
@@ -111,7 +160,7 @@ success.
   2026-09-29.
 
 - **Connecting to the Scraping Browser API** follows one policy in every
-  engine (family template §26): three attempts 3 s apart for a locked
+  engine: three attempts 3 s apart for a locked
   profile or an outage, none for an expired login (401), and a message that
   names the status's own cause. pyppeteer's per-attempt timeout is 10 s (it
   reports a refused handshake only as a timeout), and the orphaned-task

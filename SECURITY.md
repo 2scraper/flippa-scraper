@@ -97,13 +97,16 @@ it is recoverable. In order:
    anything pushed to a public repository should be treated as public
    permanently, whether or not the commit still exists.
 
-Three places leak credentials that people do not expect, because unlike our own
+Two places leak credentials that people do not expect, because unlike our own
 log lines they are **not** masked:
 
 - **raw HTML dumps** (`--dump-html`, and the automatic dump on a zero-product
   run) — these can contain session cookies
-- **the Scraper API's `x-debug` response header**
 - **your shell history**, if you passed a key on the command line
+
+The Scraper API's `x-debug` response header is logged, and since the release
+after 0.2.1 it goes through the same redaction as every other log line; it was
+logged verbatim before that.
 
 Use `.env` for credentials. It is in `.gitignore`, and `python3 env_config.py`
 reports what is configured without printing any values.

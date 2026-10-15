@@ -20,10 +20,8 @@ on:
 jobs:
   live-run:
     runs-on: ubuntu-latest
-    # `secrets` is not available in a job-level `if`, so presence is tested
-    # through job env and read in each step's `if`.
-    env:
-      HAS_PROXY: ${{ secrets.FLIPPA_PROXY != '' }}
+    # Needs no secret: the run goes direct from the runner. FLIPPA_PROXY is
+    # optional and only changes the route when it is set.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -63,21 +61,21 @@ jobs:
           code="${{ steps.run.outputs.exit_code }}"
           case "$code" in
             0) echo "OK — listings parsed from a live run." ;;
-            3) if [ "${{ env.HAS_PROXY }}" = "true" ]; then
-                 echo "::error::Blocked before parsing (exit 3) even through the configured proxy — this looks like a site-side change."
-                 exit 1
-               else
-                 echo "::notice::Blocked before parsing (exit 3) from a bare GitHub runner, which is a datacentre address. flippa.com served this URL from an ordinary connection on 2026-09-19, so this is more likely the runner's IP than a site change. Set the FLIPPA_PROXY secret to check it properly."
-                 exit 0
-               fi ;;
+            # flippa.com serves this URL to a bare GitHub runner: every
+            # scheduled run from 2026-09-29 to 2026-10-14 reached the page and
+            # parsed it (exit 4 there was the parser, not a block). So a block
+            # is a real finding here and is never excused as "the runner's IP".
+            3) echo "::error::Blocked before parsing (exit 3). flippa.com has served this URL to GitHub's runners with no proxy, so this is a change on the site's side (or a new block on runner addresses) — read the dumped page in the artefacts." ; exit 1 ;;
             4) echo "::error::Ran fine but parsed 0 listings (exit 4) on a URL known to have hundreds — this is the shape a real site-side break takes." ; exit 1 ;;
+            5) echo "::error::The content was never obtained (exit 5): navigation timed out, the page never painted, or it held listings the parser could not read. See the log and the dumped page." ; exit 1 ;;
             6) echo "::error::Partial run (exit 6) — see the sidecar's stop_reason. 'pagination_not_addressable' means the ?page[number]= convention has stopped working." ; exit 1 ;;
             *) echo "::error::Unexpected exit code $code (see the step above)." ; exit 1 ;;
           esac
 
       - name: Sanity-check the scraped data
         # Exit 0 only means some listings were written; it says nothing about
-        # whether the columns are populated.
+        # whether the columns are populated. (Any other exit already failed
+        # the job in the step above.)
         if: steps.run.outputs.exit_code == '0'
         run: |
           python3 - <<'EOF'

@@ -216,34 +216,43 @@ def _discover_captcha(driver, url: str):
     return challenge_from_discovery(info, page_url=url)
 
 
-def handle_captcha_if_present(driver, args) -> None:
-    """Runs after EVERY navigation, for ANY page — not scoped to one URL."""
+def handle_captcha_if_present(driver, args, budget: page_flow.SolveBudget) -> bool:
+    """Runs after EVERY navigation, for ANY page — not scoped to one URL.
+
+    Every purchase goes through `budget`, the page's one allowance. Returns
+    True when the page was reloaded. Selenium exposes no HTTP status, so none
+    is passed to the classifier here or anywhere in this engine."""
     html = driver.page_source
     url = driver.current_url
     challenge = reconcile_detections(detect_in_html(html, url),
                                      _discover_captcha(driver, url))
     if not challenge:
-        return
+        return False
 
-    state = page_flow.classify(html, url=url)
+    state = page_flow.classify(html, status_code=None, url=url)
     if args.solve_captcha == "when-blocked" and not state.policy.may_solve:
         logger.info("%s detected via %s, but the page is %s — not paying to "
                     "solve it.", challenge.kind, challenge.source, state)
-        return
+        return False
 
     logger.warning("%s detected via %s (sitekey=%s) — attempting to solve.",
                    challenge.kind, challenge.source, challenge.sitekey)
     if not args.twocaptcha_key:
         logger.warning("No 2captcha API key, so this challenge cannot be solved "
                        "— continuing with whatever the page already holds.")
-        return
+        return False
+    if not budget.spend():
+        logger.warning("%s still present, but this page has already used its "
+                       "%d paid solve(s) — not buying another.",
+                       challenge.kind, budget.limit)
+        return False
     try:
         token = solve(challenge, args.twocaptcha_key,
                       api_version=args.captcha_api, min_score=args.min_score)
     except Exception as e:  # noqa: BLE001 — a solver failure is not a crash
         logger.error("Solving the challenge failed (%s) — continuing.",
                      redact_secret_patterns(str(e)))
-        return
+        return False
     # The BODY form, not the arrow function: see captcha_solver's two
     # constants and _discover_captcha above.
     driver.execute_script(INJECT_TOKEN_BODY, token)
@@ -251,11 +260,13 @@ def handle_captcha_if_present(driver, args) -> None:
         logger.info("Token injected. Reloading page to continue.")
         time.sleep(1.5)
         driver.refresh()
+        return True
     else:
         # See the twins: a reload on a page that was not blocked discards the
         # token, and a form's token is only useful at submit time.
         logger.info("Token injected and left in the page's own response field. "
                     "This page was not blocked, so it is NOT reloaded.")
+        return False
 
 
 def _dump_debug(driver, args, page_num: int, html: Optional[str]) -> None:
@@ -273,6 +284,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     outcome = PageOutcome(page_num=page_num, url=url)
     block_retries = args.proxy_block_retries if (pool and len(pool) > 1) else 0
     html, state, load_failed = None, None, False
+    # One allowance for the whole page: not per attempt, not per exit.
+    budget = page_flow.SolveBudget()
 
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d/%d: %s", page_num, args.pages, url)
@@ -314,16 +327,18 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         if load_failed:
             break
 
-        handle_captcha_if_present(session.driver, args)
+        handle_captcha_if_present(session.driver, args, budget)
         cards = _wait_for_cards(session.driver)
         html = session.driver.page_source
-        state = page_flow.classify(html, url=session.driver.current_url)
+        state = page_flow.classify(html, status_code=None,
+                                   url=session.driver.current_url)
         logger.info("Page %d is %s (%d card(s) rendered).", page_num, state, cards)
 
         if state.state == page_flow.UNPAINTED and state.policy.wait_first:
             time.sleep(RENDER_WAIT_MS / 1000.0)
             html = session.driver.page_source
-            state = page_flow.classify(html, url=session.driver.current_url)
+            state = page_flow.classify(html, status_code=None,
+                                   url=session.driver.current_url)
             logger.info("After waiting, page %d is %s.", page_num, state)
 
         if not state.policy.rotate_exit:
@@ -578,9 +593,12 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     if args.fingerprint:
-        logger.warning("--fingerprint is not implemented in the Selenium engine "
-                       "— continuing without one. playwright_scraper.py applies "
-                       "fingerprints; see fingerprint_client.py.")
+        # Refused, not ignored: a run that accepted the flag and then went
+        # without would look fingerprinted while it was not.
+        logger.error("--fingerprint is not implemented in the Selenium engine. "
+                     "playwright_scraper.py applies fingerprints; see "
+                     "fingerprint_client.py.")
+        sys.exit(2)
     try:
         sys.exit(scrape(args))
     except ProxyError as e:
