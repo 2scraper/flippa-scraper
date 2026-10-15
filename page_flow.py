@@ -4,15 +4,15 @@ page_flow.py
 What kind of page came back, and what a run should do about it.
 
 flippa.com answers a listing request in five distinguishable ways, and four of
-them want a different response — which is the test this family's template sets for
-adding this module rather than writing the triage three times, once per
-engine, and letting the three drift:
+them want a different response — which is the reason for this module rather
+than writing the triage three times, once per engine, and letting the three
+drift:
 
-    content      the listing JSON is there with records in it        parse
-    empty        the site says so itself: metadata.totalResults == 0  stop, exit 4
-    exhausted    past the last page: results == [] with a total > 0   stop, complete
-    unpainted    served, but the data has not arrived in this
-                 response yet — the SPA shell                         wait, then retry
+    content      listing cards are on the page                        parse
+    empty        the site says so itself: "Show 0 results"            stop, exit 4
+    exhausted    past the last page: no cards, and a count above 0    stop, complete
+    unpainted    served, but no cards and no count in this
+                 response yet                                         wait, then retry
     blocked      a challenge, a refusal status, or a page that is
                  not built out of Flippa's own assets                 rotate/solve, exit 3
 
@@ -32,8 +32,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from product_parser import (asset_reference_count, count_cards,
-                            detect_bot_challenge, parse_state, state_results,
-                            state_total_results, MIN_ASSET_REFERENCES)
+                            detect_bot_challenge, results_count,
+                            MIN_ASSET_REFERENCES)
 
 CONTENT = "content"
 EMPTY = "empty"
@@ -48,13 +48,13 @@ BLOCKED = "blocked"
 REFUSAL_STATUSES = (401, 403, 405, 406, 429, 503)
 
 
-# What a full page of this site holds. Flippa serves 25 listings per page on
-# every capture taken (search, category shortcuts, filtered search, page 2,
-# page 99), and the site's own metadata says how many matched in total — so
-# "did this page bring back everything it should have?" is ARITHMETIC here,
-# not a threshold or a guess (measured elsewhere in this family: where a site publishes the
-# numbers, a gap is arithmetic).
-PAGE_SIZE = 25
+# What a full page of this site holds. Flippa serves 50 listings per page on
+# every capture taken on 2026-10-14 (search, /fr/ and /es/ search, category
+# shortcuts, a filtered search and its page 2; the last page of a 676-match
+# filter held 26 = 676 - 13 x 50). It was 25 before the 2026-09-29 rebuild.
+# The site states how many matched in total, so "did this page bring back
+# everything it should have?" is ARITHMETIC here, not a threshold or a guess.
+PAGE_SIZE = 50
 
 
 def expected_records(total_results, page_num: int, page_size: int = PAGE_SIZE):
@@ -77,7 +77,7 @@ def expected_records(total_results, page_num: int, page_size: int = PAGE_SIZE):
 def shortfall(total_results, page_num: int, got: int, page_size: int = PAGE_SIZE):
     """A message naming a page that came back short, or None.
 
-    A page that returns 18 of the 25 listings the site's own count says are
+    A page that returns 38 of the 50 listings the site's own count says are
     there is the signature of a snapshot taken mid-render — and it is exactly
     the failure that otherwise looks like a successful run with less data.
     """
@@ -147,43 +147,36 @@ def classify(html: Optional[str], status_code: Optional[int] = None,
 
     Ordered by how much each signal proves:
 
-    1. Flippa's own embedded listing JSON, which answers the question outright
-       — including "this query matches nothing", which no interstitial could
-       fake.
-    2. Rendered cards, for a page a browser has navigated inside the app.
-    3. A refusal status.
-    4. A challenge marker, and only now: a marker scan on a page that HAS
+    1. Flippa's own count of matches ("Show 0 results"), which answers
+       "this query matches nothing" outright — no interstitial could fake it.
+    2. Listing cards.
+    3. The count again, above zero with no cards: past the end of the listing.
+    4. A refusal status.
+    5. A challenge marker, and only now: a marker scan on a page that HAS
        produced listing data would only ever produce a false positive, since
        the 2Captcha Scraping Browser's own extension injects captcha markup
        into every page it loads.
-    5. Whether the response is built out of Flippa's own assets at all. This
+    6. Whether the response is built out of Flippa's own assets at all. This
        is the one that classifies Chromium's network-error page correctly —
        it carries the site's hostname in its <title>, so every text marker
        reads it as a real page.
     """
     html = html or ""
-    state = parse_state(html)
-    total = state_total_results(state)
-    records = len(state_results(state))
+    total = results_count(html)
     cards = count_cards(html)
 
-    if state is not None and total == 0:
+    if total == 0:
         return PageState(EMPTY, "the site reports 0 matches for this query",
-                         total_results=0, record_count=records,
-                         card_count=cards, status_code=status_code)
-    if records:
-        return PageState(CONTENT, f"{records} listing record(s) in the page's own JSON",
-                         total_results=total, record_count=records,
-                         card_count=cards, status_code=status_code)
-    if state is not None and total:
-        return PageState(EXHAUSTED,
-                         f"no records on this page, past the end of {total} result(s)",
-                         total_results=total, card_count=cards,
+                         total_results=0, card_count=cards,
                          status_code=status_code)
     if cards:
-        return PageState(CONTENT, f"{cards} rendered card(s), no embedded JSON",
-                         total_results=total, card_count=cards,
-                         status_code=status_code)
+        return PageState(CONTENT, f"{cards} listing card(s)",
+                         total_results=total, record_count=cards,
+                         card_count=cards, status_code=status_code)
+    if total:
+        return PageState(EXHAUSTED,
+                         f"no listings on this page, past the end of {total} result(s)",
+                         total_results=total, status_code=status_code)
 
     if status_code in REFUSAL_STATUSES:
         return PageState(BLOCKED, f"HTTP {status_code}", vendor="http",

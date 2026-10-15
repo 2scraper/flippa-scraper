@@ -4,72 +4,57 @@ product_parser.py
 Extraction for flippa.com listing pages. **This module IS the site** — every
 other module in this repo is family core with a handful of named constants.
 
-What the captures actually say (measured elsewhere in this family: answered from the
-dumps, not from expectation). Sources: a rendered browser capture of
-`/search?filter[sitetype]=saas` (2026-08-27, `captures/real_search_dump.html`,
-1.3 MB, 25 cards) and five plain-HTTP captures taken 2026-09-19 (search page
-1 and 2, a category shortcut, a no-results query, and a page past the end).
+What the captures say. Sources, all 2026-10-14: the daily canary's own
+browser capture of `/search?filter[property_type]=saas` (CI run 38561094467,
+1.3 MB, 50 cards) and plain-HTTP captures of `/search`, `/fr/search`,
+`/es/search`, `/websites`, `/buy/sitetype/saas`, the same filter's pages 2,
+14 (the last) and 15 (past the end), and a query that matches nothing.
 
-1. **There is no product JSON-LD.** A search page carries exactly two
-   `application/ld+json` blocks: a `WebPage` and an `FAQPage`. Neither
-   contains a single listing. A parser built on the family's usual JSON-LD
-   primary path would return zero rows for ever, silently.
+**Flippa rebuilt its search page between 2026-09-28 and 2026-09-29.** The
+version this module was first written against embedded every listing as
+`const STATE = {...}` JSON and rendered it with Angular into
+`<div id="listing-N">` cards linking to `flippa.com/<id>`. All three are gone:
+0 occurrences of `STATE` on any 2026-10-14 capture. The daily canary went red
+on 2026-09-29 and stayed red until this rewrite. What the page is now:
 
-2. **Flippa embeds its own listing JSON in the page it serves**, as
-   `const STATE = {"results":[...], "metadata":{"totalResults":N,...}}` — 25
-   records per page, each numeric and complete (price, original_price,
-   multiples, profit, country, badges). This is the site's own structured
-   data, it is present in the RAW HTTP response with no JavaScript executed,
-   and the grid is rendered from it. It is therefore the primary path, and
-   the equivalent of JSON-LD everywhere else in this family.
+1. **There is no structured listing data at all.** One `application/ld+json`
+   block (not a listing), no embedded JSON, no `__NEXT_DATA__`-style payload.
+   The page is server-rendered HTML (Rails, Hotwire/Turbo), so plain HTTP
+   gets exactly what a browser gets — 50 cards either way.
 
-3. **The rendered grid is the same 25 records, in the same order.** Verified
-   on the browser capture: the DOM's `<div id="listing-NNN">` ids match
-   `STATE.results[*].id` one for one, in order. So the DOM is a fallback
-   rather than a second opinion — but it is a real fallback, because a page
-   fetched through a browser that has already navigated inside the Angular
-   app can hold a grid the served STATE does not describe.
+2. **A card is `<li id="listing-NNN">`**, and its boundary is that id: not a
+   CSS class (Tailwind build output) and not a widen-up-from-a-link heuristic
+   (a card links to its listing twice, title and "View Listing"). The same
+   page also carries `<span id="listing-category-count-…">` filter counters,
+   which is why the id is matched as `listing-` + DIGITS, never as a prefix.
 
-4. **A card's boundary is the site's own id attribute**, `id="listing-NNN"` —
-   not a CSS class (Flippa's are Tailwind build output) and not "widen up
-   from a product link until one link is left": a real card holds THREE links
-   to the same listing (thumbnail, text block, "View Listing"), plus a
-   `/watch_item?...` link, so the widen-up heuristic never leaves the anchor.
+3. **A listing link is `flippa.com/<id>-<slug>`** (`/fr/<id>-<slug>` on the
+   French page). The id is the leading digits; the slug is the seller's
+   title, lower-cased, and is not part of the id.
 
-5. **The badges are Angular `ng-if` attributes**, which name the field they
-   render: `listing.sponsored`, `listing.confidential`, `listing.price_dropped`
-   and so on. Reading those is exact. The previous version of this file
-   matched the card's TEXT for "Sponsored"/"Open", which a seller's own
-   one-line summary can contain — a false positive waiting to happen, and
-   `status` was matched that way against the word "Open" that also appears in
-   "Open to Offer".
+4. **The key-data grid prints money ABBREVIATED** — "USD $160K", "USD $51.7K",
+   "USD $1.23M" — so `monthly_revenue` and `monthly_profit` carry the
+   precision the site shows (three significant figures), not the exact
+   figure the old embedded JSON had. The asking price and the struck-through
+   original are printed in full. Labels are translated per locale.
 
-6. **Net profit can be negative and is written `-USD $315 p/mo`.** 2 of the
-   25 cards on the 2026-08-27 capture are negative. The previous parser
-   stripped the currency with a `^`-anchored pattern, so the leading minus
-   made the whole field fail to parse and the column came back null on
-   exactly the rows where it mattered.
+5. **Columns the card no longer shows stay null**: `monetization`,
+   `revenue_multiple`, `status`, `sale_method`, `sponsored`,
+   `editors_choice`, `confidential`, `verified_listing` and `image_url`
+   (the only image on a card is the broker's photo, which is not a picture
+   of the business). Nothing is inferred to fill them.
 
-7. **Pagination is `?page[number]=N`, and a bare `?page=N` is deleted by the
-   site's own code.** From Flippa's shipped `legacy-foot-*.js`:
-
-       e.currentPage > 1 ? t["page[number]"] = e.currentPage
-                         : (delete t.page_number, delete t["page[number]"]),
-       t.page && delete t.page
-
-   The server honours both spellings for the initial render (measured
-   2026-09-19: `?page=2` and `?page[number]=2` return the same 25 ids, none
-   of them page 1's), but the app rewrites the URL to `page[number]`, so that
-   is the spelling this module builds. There is NO next-page link anywhere in
-   the markup to follow: the pagination control is
-   `<span ng-click="pageChangeHandle(page)">2</span>` with no href, so
-   `page_url()` is not a fallback here — it is the only mechanism, and every
-   run verifies it against the data (see the engines' addressability check).
+6. **Pagination is `?page=N`.** The page's own next link is
+   `?page=2&pagination=true`. Measured 2026-10-14: `?page=2`,
+   `?page=2&pagination=true` and the old `?page[number]=2` return the same 50
+   ids, none of them page 1's; the last page of a 676-match filter is page 14
+   with 26 cards; page 15 answers 200 with no cards and the same
+   "Show 676 results" count. Every run still verifies the convention against
+   the data (see the engines' addressability check).
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import List, Optional, Tuple
@@ -82,18 +67,22 @@ from output_writer import Product
 logger = logging.getLogger("product_parser")
 
 SELECTORS = {
-    # The site's own id attribute on the card wrapper. The rule this family settled on: where a
-    # site publishes no structured data in the DOM, its own data attribute is
-    # a better anchor than any class and nearly as good as structured data.
+    # The site's own id attribute on the card wrapper: where a site publishes
+    # no structured data, its own id is a better anchor than any class.
     # Used by every engine as the "has the grid rendered?" marker too.
-    "item_card": 'div[id^="listing-"]',
+    #
+    # Deliberately tag-agnostic: the card changed from <div> to <li> on
+    # 2026-09-29 and a `div[...]` selector silently stopped matching. The
+    # `:not` excludes the filter counters (`listing-category-count-saas`),
+    # which share the prefix — 19 of them on a search page.
+    "item_card": '[id^="listing-"]:not([id^="listing-category"])',
 }
 
-# A listing's own URL is flippa.com/<digits> and nothing else — no slug, no
-# extension. That is the id, and it is also how a link is told apart from the
-# dozens of other links on a card (/watch_item?..., /auctions/<id>/bids,
-# /data-insights?...).
-_LISTING_PATH_RE = re.compile(r"^/(\d{5,10})/?$")
+# A listing's own URL is flippa.com/<digits>-<slug>, optionally under a locale
+# segment (/fr/, /es/). The digits are the id; that is also how a listing link
+# is told apart from the other links on a card (/product/premium,
+# /listings/<id>/watchlists/toggle).
+_LISTING_PATH_RE = re.compile(r"^(?:/[a-z]{2})?/(\d{5,10})(?:-[^/]*)?/?$")
 _CARD_ID_RE = re.compile(r"^listing-(\d+)$")
 
 # ---------------------------------------------------------------------------
@@ -124,9 +113,6 @@ _PRICE_RE = re.compile(
     r"(?:\b([A-Z]{3})\b\s*)?"                    # optional ISO code:  USD $13,202
     r"(?:([$€£¥])\s?)?"                          # optional symbol
     r"(" + _AMOUNT + r")")
-_REDUCED_PCT_RE = re.compile(r"Reduced\s+([\d.]+)\s*%", re.IGNORECASE)
-_PROFIT_MULTIPLE_RE = re.compile(r"([\d.]+)\s*x\s*Profit", re.IGNORECASE)
-_REVENUE_MULTIPLE_RE = re.compile(r"([\d.]+)\s*x\s*Revenue", re.IGNORECASE)
 _BID_COUNT_RE = re.compile(r"(\d[\d,]*)\s*bids?\b", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
@@ -193,105 +179,14 @@ def asset_reference_count(html: str) -> int:
 
 
 def count_cards(html: str) -> int:
-    """How many rendered listing cards the markup holds."""
+    """How many listing cards the markup holds (each id counted once).
+
+    Matches `listing-` followed by DIGITS on any tag, so the filter counters
+    (`listing-category-count-saas`) are never counted and a change of the
+    card's tag cannot hide the grid.
+    """
     return len(set(_CARD_ID_RE.match(m).group(1)
                    for m in re.findall(r'id="(listing-\d+)"', html)))
-
-
-# ---------------------------------------------------------------------------
-# The embedded listing JSON
-# ---------------------------------------------------------------------------
-_STATE_ASSIGNMENT_RE = re.compile(r"\bconst\s+STATE\s*=\s*")
-
-
-def _json_object_at(text: str, start: int) -> Optional[str]:
-    """Return the JSON object beginning at `start`, by brace matching.
-
-    Reading to the end of the line would work on both captures — the site
-    emits the object on one line — but that is a formatting accident, and a
-    pretty-printed deploy would silently return nothing. Quotes and escapes
-    are tracked so a brace inside a seller's summary cannot end the scan.
-    """
-    if start >= len(text) or text[start] != "{":
-        return None
-    depth, in_string, escaped = 0, False, False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
-            continue
-        if ch == '"':
-            in_string = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start:i + 1]
-    return None
-
-
-def parse_state(html: str) -> Optional[dict]:
-    """Flippa's embedded `const STATE = {...}` object, or None.
-
-    None means the response is not a rendered listing page — the shell before
-    the assignment is emitted, an interstitial, or an error page. It never
-    means "no listings": an empty listing is `{"results": [], ...}` with a
-    metadata block, which is a different and reportable answer.
-    """
-    match = _STATE_ASSIGNMENT_RE.search(html)
-    if not match:
-        return None
-    raw = _json_object_at(html, match.end())
-    if raw is None:
-        logger.warning("Found the STATE assignment but could not brace-match "
-                       "its object — treating the page as unparsed.")
-        return None
-    try:
-        state = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.warning("Flippa's embedded listing JSON did not parse (%s) — "
-                       "falling back to the rendered cards.", e)
-        return None
-    return state if isinstance(state, dict) else None
-
-
-def state_total_results(state: Optional[dict]) -> Optional[int]:
-    """Flippa's own count of matches for this query, or None.
-
-    Capped by the site at 10000 — it prints "10,000+" above that — so a caller
-    must not treat 10000 as exact.
-    """
-    if not state:
-        return None
-    metadata = state.get("metadata")
-    if not isinstance(metadata, dict):
-        return None
-    total = metadata.get("totalResults")
-    return total if isinstance(total, int) else None
-
-
-def state_results(state: Optional[dict]) -> List[dict]:
-    """The listing records in `state`, or [].
-
-    **A zero-match query still returns five records.** Measured 2026-09-19:
-    `?query[keyword]=<nonsense>` answers with `totalResults: 0` and five
-    promoted listings — the same five that lead the unfiltered search page.
-    They are placements, not matches, so reporting them would be five
-    fabricated rows in an empty result. The caller (page_flow.classify) treats
-    totalResults == 0 as an empty listing and never gets here.
-    """
-    if not state:
-        return []
-    results = state.get("results")
-    if not isinstance(results, list):
-        return []
-    return [r for r in results if isinstance(r, dict)]
 
 
 # ---------------------------------------------------------------------------
@@ -367,20 +262,6 @@ def prices_in(text: str) -> Tuple[List[float], Optional[str]]:
     return amounts, currency
 
 
-def _currency_from_label(label: Optional[str]) -> Optional[str]:
-    """ISO code out of Flippa's own `currency_label`, e.g. "USD $" -> "USD".
-
-    Never a default: a label this does not recognise leaves the column null,
-    because a wrong currency is not a rounding error.
-    """
-    if not label:
-        return None
-    m = re.search(r"\b([A-Z]{3})\b", label)
-    if m and m.group(1) in _CURRENCY_CODES:
-        return m.group(1)
-    return _CURRENCY_SYMBOLS.get(label.strip()[:1])
-
-
 def _norm_space(text: Optional[str]) -> Optional[str]:
     """Collapse runs of whitespace, or None for nothing at all.
 
@@ -394,20 +275,6 @@ def _norm_space(text: Optional[str]) -> Optional[str]:
         return None
     collapsed = re.sub(r"\s+", " ", str(text)).strip()
     return collapsed or None
-
-
-def _to_float(value) -> Optional[float]:
-    """A number out of a JSON field that may be a number, a string, or null."""
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    amounts, _ = prices_in(str(value))
-    return amounts[0] if amounts else None
-
-
-def _to_bool(value) -> Optional[bool]:
-    return value if isinstance(value, bool) else None
 
 
 def discount_pct(price: Optional[float], original: Optional[float],
@@ -440,10 +307,12 @@ def discount_pct(price: Optional[float], original: Optional[float],
 # ---------------------------------------------------------------------------
 # Pagination
 # ---------------------------------------------------------------------------
-_PAGE_PARAM = "page[number]"
-# Every spelling of "which page" that Flippa's own deserializer reads, all of
+_PAGE_PARAM = "page"
+# Every spelling of "which page" the site has used or still honours, all of
 # which have to be removed before a new one is set, or two of them end up in
-# the same URL disagreeing with each other.
+# the same URL disagreeing with each other. `page[number]` is the spelling of
+# the pre-2026-09-29 site; it still works, and a URL saved from back then
+# must not end up carrying both.
 _PAGE_PARAM_ALIASES = ("page[number]", "page_number", "page")
 
 
@@ -451,9 +320,8 @@ def page_url(url: str, page_num: int) -> str:
     """`url` with Flippa's own page parameter set to `page_num`.
 
     Site knowledge, hence here rather than in an engine. Page 1 carries no
-    page parameter at all — that is what the site's own serializer does, and a
-    `page[number]=1` would make page 1's URL differ from the URL a user pastes
-    for no reason.
+    page parameter at all — the site's own page-1 URL has none, and a `page=1`
+    would make page 1's URL differ from the URL a user pastes for no reason.
 
     Existing query parameters (filters, sort order, keyword) are preserved,
     and every spelling of the page parameter is replaced rather than appended
@@ -516,299 +384,219 @@ def category_from_url(url: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# The primary path: Flippa's own embedded listing JSON
-# ---------------------------------------------------------------------------
-def _listing_id(record: dict) -> Optional[str]:
-    raw = record.get("id")
-    if raw is None:
-        return None
-    raw = str(raw).strip()
-    return raw or None
-
-
-def _row_from_record(record: dict, base_url: str, category: Optional[str],
-                     page: Optional[int], position: Optional[int]) -> Product:
-    """One Product from one record of Flippa's embedded listing JSON."""
-    sku = _listing_id(record)
-    url = record.get("listing_url") or (urljoin(base_url, f"/{sku}") if sku else "")
-
-    price = _to_float(record.get("price"))
-    original_price = _to_float(record.get("original_price"))
-    # price_dropped is the flag the card renders from; without it a stale
-    # original_price left on a record would read as a live discount.
-    if not record.get("price_dropped"):
-        original_price = None
-
-    basic_info = record.get("basic_info")
-    title = None
-    if isinstance(basic_info, dict):
-        title = _norm_space(basic_info.get("name"))
-    # The card's paragraph renders the record's `title`, not its `summary` —
-    # verified on all 25 cards of the 2026-08-27 capture. The two differ: one
-    # listing's summary carries a euro sign its title has had stripped, so
-    # reading `summary` here would make the two paths disagree on rows where
-    # nothing is actually wrong.
-    summary = record.get("title") or record.get("summary")
-
-    bid_count = record.get("bid_count")
-    bid_count = int(bid_count) if isinstance(bid_count, int) else None
-
-    # Net profit comes from the record's own key_data block, which is what the
-    # card renders — NOT from `profit_average`. Measured on the 2026-08-27
-    # capture: `profit_average` is null on exactly the two listings that lose
-    # money, while key_data carries "-USD $315 p/mo" for them. Reading
-    # profit_average alone drops the column on the rows where its sign is the
-    # whole story.
-    key_data = _record_key_data(record)
-    monthly_profit = _money_valued(key_data)
-    if monthly_profit is None:
-        monthly_profit = _to_float(record.get("profit_average"))
-
-    # `multiple` and `revenue_multiple` are 0.0 — not null — on a listing that
-    # has no multiple to show, and the card renders none for it (show_multiple
-    # is false). Reporting 0.0 would be a fabricated valuation.
-    show_multiple = record.get("show_multiple")
-    profit_multiple = revenue_multiple = None
-    if show_multiple is not False:
-        profit_multiple = _to_float(record.get("multiple")) or None
-        revenue_multiple = _to_float(record.get("revenue_multiple")) or None
-
-    return Product(
-        url=url,
-        sku=sku,
-        title=title,
-        price=price,
-        currency=_currency_from_label(record.get("currency_label")),
-        original_price=original_price,
-        discount_pct=discount_pct(price, original_price,
-                                  _to_float(record.get("price_dropped_percent")),
-                                  sku),
-        category=category,
-        price_source="state",
-        page=page,
-        position=position,
-        description=_norm_space(summary),
-        asset_type=record.get("property_type") or None,
-        # Flippa calls the industry "category" in its own JSON and prints it
-        # under the label "Industry" on the card. Renamed here rather than
-        # shadowing this repo's own `category` column, which holds the run's
-        # --category label.
-        industry=record.get("category") or None,
-        monetization=record.get("monetization") or None,
-        monthly_profit=monthly_profit,
-        monthly_revenue=_to_float(record.get("revenue_average")),
-        profit_multiple=profit_multiple,
-        revenue_multiple=revenue_multiple,
-        age_text=record.get("formatted_age_in_years") or None,
-        country=record.get("country_name") or None,
-        status=record.get("status") or None,
-        sale_method=record.get("sale_method") or None,
-        bid_count=bid_count,
-        broker_name=(record.get("broker_name") or None),
-        managed_by_flippa=_to_bool(record.get("managed_by_flippa")),
-        sponsored=_to_bool(record.get("sponsored")),
-        editors_choice=_to_bool(record.get("editors_choice")),
-        confidential=_to_bool(record.get("confidential")),
-        # The card's "Verified Listing" pill renders from
-        # display_verification_badge; `manually_vetted` is the separate
-        # tooltip beside it, and mapping that one instead made the two paths
-        # disagree on a listing that carries the pill without the tooltip.
-        verified_listing=_to_bool(record.get("display_verification_badge")),
-        image_url=(record.get("thumbnail_url")
-                   or record.get("blurred_or_thumbnail_url") or None),
-    )
-
-
-def rows_from_state(state: dict, base_url: str, category: Optional[str] = None,
-                    page: Optional[int] = None) -> List[Product]:
-    rows = []
-    for position, record in enumerate(state_results(state), start=1):
-        if _listing_id(record) is None:
-            # No id means no sku, no url and nothing to dedupe on. Say so
-            # rather than emitting a row that cannot be joined to anything.
-            logger.warning("Skipping an embedded record with no id "
-                           "(position %d).", position)
-            continue
-        rows.append(_row_from_record(record, base_url, category, page, position))
-    return rows
-
-
-# ---------------------------------------------------------------------------
-# The fallback path: the rendered cards
+# The listing cards
 # ---------------------------------------------------------------------------
 _MONEY_MARKER_RE = re.compile(r"[$€£¥]|\b(?:" + "|".join(sorted(_CURRENCY_CODES)) + r")\b")
+_ISO_ANYWHERE_RE = re.compile(r"\b(" + "|".join(sorted(_CURRENCY_CODES)) + r")\b")
+# A key-data amount is ABBREVIATED on the card: "USD $51.7K", "USD $2.1M",
+# "51,7K € (EUR)". The number before the suffix is parsed with the same
+# decimal rules as every other amount, then scaled.
+_ABBREVIATED_RE = re.compile(
+    r"(\d(?:[\d.," + _GROUP_SPACES + r"]*\d)?)\s*([KkMmBb])?(?![A-Za-z])")
+_SCALE = {"k": 1e3, "m": 1e6, "b": 1e9}
+_PERCENT_VALUE_RE = re.compile(r"(\d{1,3}(?:[.,]\d+)?)\s*%")
+_MULTIPLE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*x\b", re.IGNORECASE)
+
+# The key-data labels, in the three languages Flippa's hreflang set publishes.
+# Measured on 2026-10-14 on /search, /fr/search and /es/search: the same six
+# labels, translated, in the same order, with "Monthly Profit" and "Profit
+# Multiple" absent on a card that has none to show. A label not in this table
+# is ignored rather than guessed at, and the column stays null.
+_KEY_DATA_LABELS = {
+    "monthly revenue": "monthly_revenue", "revenu mensuel": "monthly_revenue",
+    "ingresos mensuales": "monthly_revenue",
+    "monthly profit": "monthly_profit", "bénéfice mensuel": "monthly_profit",
+    "beneficio mensual": "monthly_profit",
+    "profit multiple": "profit_multiple", "multiple de profit": "profit_multiple",
+    "múltiplo de beneficio": "profit_multiple",
+    "age": "age_text", "ancienneté": "age_text", "antigüedad": "age_text",
+    "type": "asset_type", "tipo": "asset_type",
+    "industry": "industry", "secteur": "industry", "industria": "industry",
+}
 
 
-def _money_valued(key_data: dict) -> Optional[float]:
-    """The first key-data value that is an amount of money, parsed.
+def _money(text: Optional[str]) -> Tuple[Optional[float], Optional[str]]:
+    """(amount, currency) out of one money value as the card prints it.
 
-    Read by the SHAPE of the value, not by an English label, because Flippa
-    localises the labels: the same block reads "Net Profit" on /search and
-    "Profit" on /fr/search, with "Industrie", "Monétisation" and "Ancienneté"
-    beside it. Only one entry on either page is money, so this is exact in
-    both — and in a locale nobody here has looked at.
+    Handles every shape seen on 2026-10-14: "USD $2,520,000",
+    "-USD $9" (a loss), "USD $51.7K", "USD $1.23M", "2 520 000 € (EUR)" and
+    "51,7K € (EUR)". The ISO code is read wherever it sits — the French page
+    puts it AFTER the amount, in brackets — and is matched against the
+    allowlist, never a bare [A-Z]{3}. "N/A" and anything without a currency
+    marker is (None, None): an amount with no currency beside it on this card
+    is not money.
     """
-    for value in key_data.values():
-        if value and _MONEY_MARKER_RE.search(str(value)):
-            amounts, _ = prices_in(str(value))
-            if amounts:
-                return amounts[0]
-    return None
+    if not text or not _MONEY_MARKER_RE.search(text):
+        return None, None
+    text = strip_percentages(text)
+    m = _ABBREVIATED_RE.search(text)
+    if not m:
+        return None, None
+    amount = _normalize_amount(m.group(1))
+    if amount is None:
+        return None, None
+    if m.group(2):
+        amount = round(amount * _SCALE[m.group(2).lower()], 2)
+    if text.lstrip().startswith("-"):
+        amount = -amount
+    code = _ISO_ANYWHERE_RE.search(text)
+    currency = code.group(1) if code else None
+    if currency is None:
+        sym = re.search(r"[$€£¥]", text)
+        currency = _CURRENCY_SYMBOLS.get(sym.group(0)) if sym else None
+    return amount, currency
 
 
-def _record_key_data(record: dict) -> dict:
-    """{label.lower: value} from a record's own key_data list.
-
-    The same label/value pairs the card renders: Type, Industry,
-    Monetization, Site Age (or App Age / Domain Age) and Net Profit.
-    """
-    data = {}
-    for pair in record.get("key_data") or []:
-        if isinstance(pair, dict) and pair.get("label"):
-            data[str(pair["label"]).strip().lower()] = pair.get("value")
-    return data
-
-
-def _ng_if(card, expression: str):
-    """The element an Angular `ng-if` rendered, or None.
-
-    Angular leaves `<!-- ngIf: expr -->` where the condition was false and the
-    element itself where it was true, so presence IS the boolean. Reading the
-    attribute is exact where matching the card's text is not: a seller's
-    summary containing the word "Sponsored" would otherwise set that flag.
-    """
-    return card.find(attrs={"ng-if": expression})
-
-
-def _card_key_data(card) -> dict:
-    """The card's label/value block, whatever labels this card happens to show.
-
-    Confirmed labels: Type, Industry, Monetization, Site Age (or App Age /
-    Domain Age — the site picks the wording from the asset type) and Net
-    Profit. Read generically so a card showing a different subset still parses.
-    """
-    data = {}
-    for block in card.find_all(attrs={"ng-repeat": "data in listing.key_data"}):
-        pair = block.find_all("div", recursive=False)
-        if len(pair) >= 2:
-            label = pair[0].get_text(" ", strip=True)
-            value = pair[1].get_text(" ", strip=True)
-            if label:
-                data[label.lower()] = value
-    return data
+def _listing_id_from_href(href: str) -> Optional[str]:
+    """The listing id out of a listing link, or None for any other link."""
+    path = re.sub(r"^https?://[^/]+", "", href or "").split("?")[0].split("#")[0]
+    m = _LISTING_PATH_RE.match(path)
+    return m.group(1) if m else None
 
 
 def _card_country(card) -> Optional[str]:
-    """The seller's country. There is no text label for it anywhere.
+    """The seller's country: the text beside the card's map-pin icon.
 
-    The element is `<div ng-if="listing.country_name">`, which names the field
-    outright; the map-pin icon it contains is the fallback for markup that
-    drops the attribute.
+    There is no text label for it, and no attribute naming the field; the
+    icon's own file name is the anchor.
     """
-    node = _ng_if(card, "listing.country_name")
-    if node is not None:
-        span = node.find("span")
-        text = (span or node).get_text(" ", strip=True)
-        if text:
-            return text
-    for svg in card.find_all("svg"):
-        use = svg.find("use")
-        href = (use.get("href") or use.get("xlink:href") or "") if use else ""
+    for use in card.find_all("use"):
+        href = use.get("href") or use.get("xlink:href") or ""
         if "map-pin" in href:
-            span = svg.find_next("span")
+            svg = use.find_parent("svg")
+            span = (svg or use).find_next("span")
             if span and span.get_text(strip=True):
-                return span.get_text(strip=True)
+                return _norm_space(span.get_text(" ", strip=True))
     return None
 
 
-def _card_prices(card, sku: Optional[str]):
-    """(price, currency, original_price, discount_pct) read off the card.
+def _card_key_data(card) -> dict:
+    """{column: raw value} from the card's label/value grid.
 
-    Scoped to the price column's own `ng-if` elements, never to the whole
-    card: the key-data block carries "USD $13,202 p/mo" (net profit) EARLIER
-    in document order than the asking price, and a whole-card search picks
-    that up instead — measured on the very first real card inspected.
-
-    Three shapes, all from the live markup:
-        <h5 ng-if="!listing.price_dropped && !listing.open_to_offer">USD $17,289</h5>
-        <div ng-if="listing.price_dropped">  <del>USD $927,250</del> ... USD $573,006 ... Reduced 38%
-        <... ng-if="listing.open_to_offer">  no figure at all
+    The grid sits ABOVE the card's <hr>; the price column sits below it and
+    has the same two-paragraph shape ("Asking price" / "USD $650,000"), so
+    the walk stops at the rule rather than trusting a class name.
     """
-    dropped = _ng_if(card, "listing.price_dropped")
-    if dropped is not None:
-        del_tag = dropped.find("del")
-        original, currency = None, None
-        if del_tag is not None:
-            amounts, currency = prices_in(
-                strip_percentages(del_tag.get_text(" ", strip=True)))
-            original = amounts[0] if amounts else None
-            del_tag.extract()   # so the current price is read from what is left
-        text = dropped.get_text(" ", strip=True)
-        badge = _REDUCED_PCT_RE.search(text)
-        amounts, cur2 = prices_in(strip_percentages(text))
-        price = amounts[0] if amounts else None
-        stated = float(badge.group(1)) if badge else None
-        return (price, currency or cur2, original,
-                discount_pct(price, original, stated, sku))
+    data = {}
+    rule = card.find("hr")
+    blocks = list(rule.find_previous_siblings()) if rule is not None else [card]
+    for block in blocks:
+        if not hasattr(block, "find_all"):
+            continue
+        for pair in block.find_all("div"):
+            paras = pair.find_all("p", recursive=False)
+            if len(paras) != 2 or pair.find("div"):
+                continue
+            label = _norm_space(paras[0].get_text(" ", strip=True)) or ""
+            column = _KEY_DATA_LABELS.get(label.lower())
+            if column is None:
+                logger.debug("Unrecognised key-data label %r — ignored.", label)
+                continue
+            data[column] = _norm_space(paras[1].get_text(" ", strip=True))
+    return data
 
-    plain = _ng_if(card, "!listing.price_dropped && !listing.open_to_offer")
-    if plain is not None:
-        amounts, currency = prices_in(
-            strip_percentages(plain.get_text(" ", strip=True)))
-        return (amounts[0] if amounts else None), currency, None, None
 
-    # "Open to offer": the site prints no figure, so neither does this row.
-    return None, None, None, None
+def _is_struck(tag) -> bool:
+    classes = " ".join(tag.get("class") or [])
+    return tag.name in ("del", "s") or "line-through" in classes
+
+
+def _card_prices(card, sku: Optional[str]):
+    """(price, currency, original_price, discount_pct, bid_count) off the card.
+
+    Scoped to the price column — the block after the card's <hr> — never to
+    the whole card: the key-data grid carries "USD $51.7K" (monthly profit)
+    EARLIER in document order than the asking price.
+
+    The shapes, all measured on 2026-10-14:
+        Asking price | USD $650,000
+        Asking price | USD $2,520,000 | <struck> USD $3,500,000 | Reduced 28%
+        Auction      | USD $4,000 | 21 bids · 4 days left
+        Auction      | USD $500   | Starting Price
+        Open to Offers | Price Guide: USD $75,000 - USD $100,000
+        Partial Sale: 25% Equity
+
+    The price is the first text-only element that carries a currency marker
+    and ONE amount. That rule needs no class name and no English word: the
+    label has no currency, a "Reduced 28%" badge has no currency, the bid line
+    has no currency, and the price guide carries TWO amounts — a range is not
+    an asking price, so an open-to-offers listing reports none, as the site
+    does.
+    """
+    rule = card.find("hr")
+    block = rule.find_next_sibling() if rule is not None else None
+    if block is None:
+        return None, None, None, None, None
+
+    original = currency = None
+    for tag in block.find_all(True):
+        if _is_struck(tag):
+            original, currency = _money(tag.get_text(" ", strip=True))
+            break
+
+    price = None
+    for tag in block.find_all(True):
+        if tag.find(True) is not None or _is_struck(tag):
+            continue
+        text = tag.get_text(" ", strip=True)
+        if not _MONEY_MARKER_RE.search(text):
+            continue
+        if len(_ABBREVIATED_RE.findall(strip_percentages(text))) != 1:
+            continue
+        price, cur = _money(text)
+        currency = currency or cur
+        if price is not None:
+            break
+
+    block_text = block.get_text(" ", strip=True)
+    stated = None
+    if original is not None:
+        m = _PERCENT_VALUE_RE.search(block_text)
+        if m:
+            stated = _normalize_amount(m.group(1))
+    bids = _BID_COUNT_RE.search(block_text)
+    bid_count = int(bids.group(1).replace(",", "")) if bids else None
+    return (price, currency, original,
+            discount_pct(price, original, stated, sku), bid_count)
 
 
 def _row_from_card(card, sku: str, base_url: str, category: Optional[str],
                    page: Optional[int], position: Optional[int]) -> Product:
-    heading = card.find("h6")
+    heading = card.find(["h4", "h3", "h5", "h6"])
     title = _norm_space(heading.get_text(" ", strip=True)) if heading else None
 
     description = None
-    desc = card.find("p", class_=lambda c: c and "tw-text-gray-900" in c)
-    if desc is not None:
-        description = _norm_space(desc.get_text(" ", strip=True))
-
-    key_data = _card_key_data(card)
-    age_text = next((v for k, v in key_data.items() if k.endswith("age")), None)
-    monthly_profit = _money_valued(key_data)
-
-    card_text = card.get_text(" ", strip=True)
-    profit_multiple = revenue_multiple = None
-    m = _PROFIT_MULTIPLE_RE.search(card_text)
-    if m:
-        profit_multiple = float(m.group(1))
-    m = _REVENUE_MULTIPLE_RE.search(card_text)
-    if m:
-        revenue_multiple = float(m.group(1))
-
-    # The card's own ng-if expressions carry the bid count exactly: the
-    # "N bids" link renders when there are bids, and the plain asking-price
-    # label renders under `!listing.bid_count`, which IS the site saying zero.
-    bid_count = None
-    bids = _ng_if(card, "listing.bid_count")
-    if bids is not None:
-        m = _BID_COUNT_RE.search(bids.get_text(" ", strip=True))
-        if m:
-            bid_count = int(m.group(1).replace(",", ""))
-    elif _ng_if(card, "!listing.bid_count && !listing.open_to_offer") is not None:
-        bid_count = 0
+    if heading is not None:
+        desc = heading.find_next_sibling("p")
+        if desc is not None:
+            description = _norm_space(desc.get_text(" ", strip=True))
 
     url = urljoin(base_url, f"/{sku}")
     for a in card.find_all("a", href=True):
-        path = re.sub(r"^https?://[^/]+", "", a["href"])
-        if _LISTING_PATH_RE.match(path):
+        if _listing_id_from_href(a["href"]) == sku:
             url = urljoin(base_url, a["href"])
             break
 
-    image_url = None
-    img = card.find("img")
-    if img is not None:
-        image_url = img.get("src") or img.get("ng-src")
+    # The strip across the top of the card says who is selling: "Brokered by
+    # Flippa" (with the broker's photo and name), "Listed by Partner Broker",
+    # or "Marketplace · Listed by Owner". Translated on /fr/ and /es/, and in
+    # all three languages only the first one names Flippa.
+    header = card.find("div", recursive=False)
+    header_text = _norm_space(header.get_text(" ", strip=True)) if header else None
+    broker_name = None
+    if header is not None and header.find("img") is not None:
+        broker_name = _norm_space(header.find("img").get("alt"))
+    managed = ("Flippa" in header_text) if header_text else None
 
-    price, currency, original_price, drop = _card_prices(card, sku)
+    key_data = _card_key_data(card)
+    monthly_revenue, _ = _money(key_data.get("monthly_revenue"))
+    monthly_profit, _ = _money(key_data.get("monthly_profit"))
+    profit_multiple = None
+    m = _MULTIPLE_RE.search(key_data.get("profit_multiple") or "")
+    if m:
+        profit_multiple = _normalize_amount(m.group(1)) or None
+
+    price, currency, original_price, drop, bid_count = _card_prices(card, sku)
 
     return Product(
         url=url,
@@ -823,38 +611,49 @@ def _row_from_card(card, sku: str, base_url: str, category: Optional[str],
         page=page,
         position=position,
         description=description,
-        asset_type=key_data.get("type"),
+        asset_type=key_data.get("asset_type"),
         industry=key_data.get("industry"),
-        monetization=key_data.get("monetization"),
         monthly_profit=monthly_profit,
+        monthly_revenue=monthly_revenue,
         profit_multiple=profit_multiple,
-        revenue_multiple=revenue_multiple,
-        age_text=age_text,
+        age_text=key_data.get("age_text"),
         country=_card_country(card),
         bid_count=bid_count,
-        managed_by_flippa=_ng_if(card, "listing.managed_by_flippa") is not None,
-        sponsored=_ng_if(card, "listing.sponsored") is not None,
-        editors_choice=_ng_if(card, "listing.editors_choice") is not None,
-        confidential=_ng_if(card, "listing.confidential") is not None,
-        verified_listing=_ng_if(card, "listing.display_verification_badge") is not None,
-        image_url=image_url,
+        broker_name=broker_name,
+        managed_by_flippa=managed,
     )
 
 
-def rows_from_dom(html: str, base_url: str, category: Optional[str] = None,
-                  page: Optional[int] = None) -> List[Product]:
-    soup = BeautifulSoup(html, "html.parser")
-    rows, seen = [], set()
-    position = 0
-    for div in soup.find_all("div", id=True):
-        m = _CARD_ID_RE.match(div["id"])
-        if not m or m.group(1) in seen:
+def iter_cards(soup):
+    """(sku, card) for every listing card, in page order, each id once."""
+    seen = set()
+    for card in soup.find_all(id=_CARD_ID_RE):
+        sku = _CARD_ID_RE.match(card["id"]).group(1)
+        if sku in seen:
             continue
-        seen.add(m.group(1))
-        position += 1
-        rows.append(_row_from_card(div, m.group(1), base_url, category,
-                                   page, position))
-    return rows
+        seen.add(sku)
+        yield sku, card
+
+
+def results_count(html: str) -> Optional[int]:
+    """Flippa's own count of matches for this query, or None.
+
+    Read from the filter panel's "Show 676 results" button
+    (`#filters-show-results-count`), which is present on every listing page
+    the site serves — including a page past the end ("Show 676 results",
+    no cards) and a query that matches nothing ("Show 0 results"). Localised
+    ("Afficher 6 073 résultats", "Mostrar 6,073 resultados"), so every digit
+    in it is the number and nothing else is.
+    """
+    m = _RESULTS_COUNT_RE.search(html or "")
+    if not m:
+        return None
+    digits = re.sub(r"\D", "", m.group(1))
+    return int(digits) if digits else None
+
+
+_RESULTS_COUNT_RE = re.compile(
+    r'id="filters-show-results-count"[^>]*>([^<]*)<')
 
 
 # ---------------------------------------------------------------------------
@@ -862,45 +661,14 @@ def rows_from_dom(html: str, base_url: str, category: Optional[str] = None,
 # ---------------------------------------------------------------------------
 def parse_products(html: str, base_url: str, category: Optional[str] = None,
                    page: Optional[int] = None) -> List[Product]:
-    """Rows for one listing page: the embedded JSON first, the cards second.
+    """Rows for one listing page, one per rendered listing card.
 
-    When both views are present the rows come from the JSON and are marked
-    `state+dom` once the rendered cards are confirmed to describe the same
-    listings in the same order. A DISAGREEMENT is not repaired silently: the
-    JSON still wins (it is what the grid is rendered from) and the mismatch is
-    logged, because overwriting a correct row is worse than leaving one
-    uncorrected.
+    A query the site itself says matches nothing returns [] even if a card
+    were present: such a card could only be a placement, not a match.
     """
-    state = parse_state(html)
-    total = state_total_results(state)
-    if state is not None and total == 0:
-        # Flippa answers a zero-match query with five promoted listings. They
-        # are placements, not matches — see state_results().
-        logger.info("Flippa reports 0 matches for this query; the %d promoted "
-                    "listing(s) it returns alongside are not results and are "
-                    "not reported.", len(state_results(state)))
+    if results_count(html) == 0:
+        logger.info("Flippa reports 0 matches for this query.")
         return []
-
-    if state is not None and state_results(state):
-        rows = rows_from_state(state, base_url, category, page)
-        dom_ids = [m for m in re.findall(r'id="listing-(\d+)"', html)]
-        if dom_ids:
-            state_ids = [r.sku for r in rows]
-            if dom_ids == state_ids:
-                for row in rows:
-                    row.price_source = "state+dom"
-            else:
-                logger.warning(
-                    "The rendered grid (%d cards) does not match the embedded "
-                    "listing JSON (%d records) — reporting the JSON, which is "
-                    "what the grid is rendered from, and leaving price_source "
-                    "as 'state'.", len(dom_ids), len(state_ids))
-        return rows
-
-    rows = rows_from_dom(html, base_url, category, page)
-    if rows:
-        logger.info("No embedded listing JSON in this response — parsed %d "
-                    "rendered card(s) instead. Columns the card does not show "
-                    "(revenue, sale method, status) stay null on these rows.",
-                    len(rows))
-    return rows
+    soup = BeautifulSoup(html or "", "html.parser")
+    return [_row_from_card(card, sku, base_url, category, page, position)
+            for position, (sku, card) in enumerate(iter_cards(soup), start=1)]

@@ -16,11 +16,11 @@ page_flow.py, shared with the other two engines so the three cannot drift.
 
 Three things here are specific to this site and worth knowing:
 
-  * **The data is in the served HTML.** Flippa embeds `const STATE = {...}`
-    with all 25 listings, so this engine does not depend on the Angular grid
-    painting. The readiness wait below is therefore a bonus (it buys the
-    rendered-card cross-check that sets `price_source` to "state+dom"), not a
-    precondition — a page that never paints still yields complete rows.
+  * **The data is in the served HTML.** Flippa's search page is
+    server-rendered: all 50 listing cards are in the first response, with no
+    JavaScript needed to produce them (measured 2026-10-14). The readiness
+    wait below is therefore a guard against reading a document mid-swap, not
+    a wait for an app to paint.
 
   * **The readiness wait never evaluates a string.** `page.wait_for_function`
     hands the browser a STRING to eval, which a site whose CSP lacks
@@ -29,11 +29,11 @@ Three things here are specific to this site and worth knowing:
     `frame-ancestors`, so the eval form WOULD work here today; polling
     through the protocol costs nothing and cannot break when that changes.
 
-  * **Pagination is verified, not assumed.** The site publishes no next-page
-    link at all, so page 2 is CONSTRUCTED (`?page[number]=2`) and then
-    CHECKED against page 1's ids before pages 3..N are planned. Every
-    multi-page run in this repo's history before that check returned exactly
-    one page's worth of rows and reported success.
+  * **Pagination is verified, not assumed.** Page 2 is CONSTRUCTED
+    (`?page=2`, the spelling of the site's own next link) and then CHECKED
+    against page 1's ids before pages 3..N are planned. Every multi-page run
+    in this repo's history before that check returned exactly one page's
+    worth of rows and reported success.
 
 Usage
 -----
@@ -80,7 +80,7 @@ logger = logging.getLogger("playwright_scraper")
 ITEM_CARD_SELECTOR = SELECTORS["item_card"]
 # How many cards mean "the grid has rendered". Must be > 1: waiting for one
 # match resolves on the first thing that looks like a card long before the
-# grid paints. Flippa serves 25 per page, so 5 is comfortably below a full
+# grid paints. Flippa serves 50 per page, so 5 is comfortably below a full
 # page and safely above an accident.
 # The family's remote-API exit code; scraper_api_client.py defines the same.
 EXIT_API_ERROR = 5
@@ -88,7 +88,8 @@ MIN_CARD_MATCHES = 5
 # How long to wait for the grid to paint. Not a precondition for data (see the
 # module docstring) — it buys the DOM cross-check.
 RENDER_WAIT_MS = 15000
-# There is no next-page link on this site; see product_parser.page_url.
+# Not followed: pages are constructed with product_parser.page_url and then
+# verified against the data, which is what lets --concurrency address them.
 NEXT_PAGE_SELECTOR = None
 # ---------------------------------------------------------------------------
 
@@ -121,7 +122,7 @@ class PageOutcome:
     load_failed: bool = False
     # The page was classified as carrying listings and the parser still got
     # nothing out of it. page_flow only returns CONTENT when it has counted
-    # records in the page's own JSON or cards in the DOM, so this is a parser
+    # listing cards in the page, so this is a parser
     # or schema problem — never the end of the listing, which has its own
     # states (EMPTY, EXHAUSTED).
     parse_failed: bool = False
@@ -300,9 +301,8 @@ def _content_when_settled(page, attempts: int = 4, pause_ms: int = 700):
     """page.content() that tolerates a page mid-navigation.
 
     Playwright raises "Unable to retrieve content because the page is
-    navigating" if the document swaps under it, and Flippa's app rewrites its
-    own URL after boot (it normalises `?page=2` to `?page[number]=2`), so a
-    snapshot taken right after goto() can land exactly on the swap. Returns
+    navigating" if the document swaps under it — a client-side redirect or a
+    Turbo visit can land exactly on the snapshot taken right after goto(). Returns
     None if the page will not hold still, so the caller can skip this step
     instead of failing the run.
     """
@@ -677,12 +677,11 @@ def _addressable(first: PageOutcome, second: PageOutcome) -> bool:
     """Did the constructed page-2 URL actually reach page 2?
 
     The check the family's most expensive bug calls for, in the
-    only form this site allows: Flippa publishes no next-page link to compare
-    a constructed URL against, so the comparison is against the DATA. If page
+    form that does not trust markup: the comparison is against the DATA. If page
     2 carries nothing page 1 did not already have, the page parameter did not
     work and pages 3..N cannot be addressed either — which is exactly what
-    `?page=N` did here before `?page[number]=N` was read out of the site's own
-    JavaScript: every "3-page" run returned 25 rows and reported success.
+    happened here once, when a page parameter the site ignored made every
+    "3-page" run return one page of rows and report success.
     """
     if not second.ok or not second.products:
         return False

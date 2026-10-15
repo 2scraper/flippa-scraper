@@ -80,13 +80,13 @@ not the check caught it.
 ## Reporting a site change
 
 Flippa changing its markup is the normal way this stops working, and it has its
-own issue template. The one detail that saves the most time: the parser reads
-**Flippa's own embedded listing JSON first** (`const STATE = {...}`, which the
-site puts in the HTML it serves), and falls back to the **rendered cards**
-(`<div id="listing-NNN">`) only if that is absent. Knowing which of the two
-broke narrows the fix immediately — and the `price_source` column on every row
-already says which one produced it. `--dump-html PATH` writes the exact bytes
-the parser was given, on success as well as failure.
+own issue template. It happened on 2026-09-29: the embedded listing JSON this
+repo read disappeared and the cards changed tag, and every run parsed 0
+listings. The parser now reads the server-rendered cards
+(`<li id="listing-NNN">`) and the site's own result count ("Show 676
+results"). `--dump-html PATH` writes the exact bytes the parser was given, on
+success as well as failure; a capture is the most useful thing a report can
+carry.
 
 ## Pull requests
 
@@ -98,13 +98,11 @@ Four properties in this repo exist because they were once absent and cost real
 time. Tests pin all four, so a PR that breaks one will fail rather than
 silently regress:
 
-- **Pagination is `?page[number]=N`, and it is VERIFIED at runtime.** The site
-  publishes no next-page link of any kind, and its own JavaScript deletes a
-  bare `?page=`. Every run fetches page 2 on its own and checks that it
-  carries listings page 1 did not; if it does not, the run stops and reports
-  `partial` rather than a complete-looking result holding one page. Every
-  multi-page run in this repo's history before that check returned exactly 25
-  rows and exit 0.
+- **Pagination is `?page=N`, and it is VERIFIED at runtime.** Every run
+  fetches page 2 on its own and checks that it carries listings page 1 did
+  not; if it does not, the run stops and reports `partial` rather than a
+  complete-looking result holding one page. Every multi-page run in this
+  repo's history before that check returned one page of rows and exit 0.
 - **A run that finds nothing writes nothing.** It must not replace a good output
   file with `[]`. `--allow-empty` is the opt-out.
 - **Exit codes are a contract**, not decoration: `0` ok, `1` crash, `2` bad

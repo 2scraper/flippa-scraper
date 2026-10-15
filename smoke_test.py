@@ -15,16 +15,25 @@ guarded and the skip is recorded and printed. CI's `engine-smoke` job installs
 each engine in its own virtualenv and fails if any group reports skipped,
 because "skipped, engine absent" reads identically to a real import error.
 
-**The fixtures are real captures, trimmed and verified.** PAGE_FIXTURE_HTML is
-two cards and the matching two records of Flippa's own embedded listing JSON,
-cut from `captures/real_search_dump.html` (a rendered /search page,
-2026-08-27) with the `<svg>` subtrees removed — they are most of a card's
-bytes and carry no data. Before it was committed, every column of both rows
-was compared against the same two rows parsed from the untrimmed 1.3 MB
-capture and found identical (only `position` differs, since 2 of 25 cards
-were kept). The listings are real, public marketplace listings; the capture
-carries no session material, no tokens and no personal data — checked, and
-`.github/ci_checks.py` keeps checking.
+**The fixtures are real captures, trimmed and verified.** All are from
+2026-10-14, after Flippa's 2026-09-29 rebuild. PAGE_FIXTURE_HTML is five cards
+cut from the daily canary's own browser capture of
+/search?filter[property_type]=saas (CI run 38561094467); VARIANTS, LAST_PAGE,
+FR, PAST_END and NO_MATCH are cut from plain-HTTP captures taken the same day
+(/search, page 14 and page 15 of the same filter, /fr/search, and a keyword
+that matches nothing). Each keeps its cards verbatim plus the site's own
+result-count element and one filter counter that shares the card id prefix;
+the <head> is cut down to a title and two asset references. Before commit,
+every column of every row was compared with the same rows parsed from the
+untrimmed capture and found identical (only `position` differs).
+
+What is NOT verbatim: each card's watch-button <form> was removed (it carries
+a CSRF `authenticity_token`), and the broker's photo URL and name in a card's
+header strip were replaced with placeholders ("Broker Placeholder"). The two
+tags at the end of PAGE_FIXTURE_HTML (`<captcha-widgets>` and a
+`chrome-extension://` script) are the 2Captcha Scraping Browser extension's
+injection, carried over from the previous fixture so the captcha checks keep
+running against that shape; the canary's plain Chromium capture has neither.
 
 SIGNUP_FIXTURE_HTML is the shape of flippa.com/signup's Turnstile widget with
 the sitekey replaced by an obvious placeholder of the same SHAPE: the tests
@@ -54,8 +63,7 @@ import captcha_solver
 from output_writer import (EXIT_BLOCKED, EXIT_NO_PRODUCTS, EXIT_PARTIAL, Product,
                            dedupe_by_sku, finish_run, save, write_csv)
 from product_parser import (category_from_url, discount_pct, page_url,
-                            parse_products, parse_state, prices_in,
-                            state_total_results, strip_percentages)
+                            parse_products, prices_in, strip_percentages)
 
 REPO = os.path.dirname(os.path.abspath(__file__))
 
@@ -100,254 +108,786 @@ def eq(label, actual, expected):
     return check(label, ok)
 
 
-PAGE_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Online Businesses for Sale | Flippa</title><link rel="canonical" href="https://flippa.com/search"><script src="https://static.flippa.com/assets/legacy-head-23638d7a.js"></script></head><body><div ng-controller="SearchV2_SearchController">
-<div class="tw-w-full tw-flex tw-flex-col @3xl:tw-flex-row tw-gap-4 tw-rounded-lg tw-border tw-border-solid tw-border-gray-300 tw-p-4 tw-shadow hover:tw-shadow-lg" id="listing-12857417">
-<a class="!tw-no-underline GTM-search-result-card tw-h-full tw-w-full @3xl:tw-max-w-72 tw-shrink-0 tw-flex-col" data-turbo="false" data-turbo-frame="_top" href="https://flippa.com/12857417" ng-href="https://flippa.com/12857417">
-<div class="tw-relative tw-group tw-rounded tw-shadow-sm tw-border tw-border-solid tw-border-gray-200">
-<img class="tw-aspect-21-9 lg:tw-aspect-video tw-w-full tw-h-full tw-object-cover tw-rounded" data-action="error-&gt;image-fallback#fallback" data-controller="image-fallback" data-image-fallback-default-image-value="https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg" ng-src="https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png" src="https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png"/>
-<!-- ngIf: listing.confidential --><div class="ng-scope" ng-if="listing.confidential">
-<div class="tw-absolute tw-top-0 tw-left-0 tw-w-full tw-h-full tw-flex tw-items-center tw-justify-center">
-<!-- ngIf: listing.invest -->
-<!-- ngIf: !listing.invest --><div class="tw-bg-primary-500 tw-p-2.5 tw-text-white tw-text-center tw-rounded-md tw-font-medium tw-font-mon ng-scope" ng-if="!listing.invest">
-        Confidential<br/>Sign NDA to view
-      </div><!-- end ngIf: !listing.invest -->
+PAGE_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Online Businesses for Sale | Flippa</title><link rel="stylesheet" href="https://static.flippa.com/assets/application-0.css"><script src="https://static.flippa.com/assets/turbo-0.js"></script></head><body><span class="tw-text-gray-400 peer-checked:tw-text-primary-600 tw-text-xs" id="listing-category-count-saas">671</span><ul><li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-11816135">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-oxford-900 tw-text-gray-100">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Brokered by Flippa
+  </p>
+<img alt="Broker Placeholder" class="tw-size-12 @3xl:tw-size-16 tw-shrink-0 tw-rounded-full tw-object-cover tw-border-2 !tw-border-solid tw-border-white tw-bg-white tw-shadow-md" loading="lazy" src="https://static2.flippa.com/avatar_placeholder.png"/>
 </div>
-</div><!-- end ngIf: listing.confidential -->
-<!-- ngIf: listing.early_access_days_remaining > 0 -->
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/11816135-social-media-entertainment-business-founded-in-2014-generating-2m-in-revenue-with-a-33-profit-margin-operates-multiple-websites-in-the-online-dating-sector">
+          SaaS | Internet
+        </a>
+</h4>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">Social media entertainment business founded in 2014, generating $2M in revenue with a 33% profit margin. Operates multiple websites in the online dating sector.</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>Canada</span>
 </div>
-<div class="tw-hidden @3xl:tw-flex tw-flex-wrap tw-gap-2.5 tw-mt-2.5">
-<!-- ngIf: listing.managed_by_flippa --><span class="!tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-orange-50 tw-text-oxford-900 !tw-text-xs !tw-px-2.5 tw-rounded ng-scope" ng-if="listing.managed_by_flippa">
-
-  Managed by Flippa
-</span><!-- end ngIf: listing.managed_by_flippa -->
-<!-- ngIf: listing.super_seller -->
-<!-- ngIf: listing.broker_seller -->
-<!-- ngIf: listing.early_access_days_remaining > 0 -->
-<!-- ngIf: listing.sponsored --><span class="!tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-yellow-50 tw-text-yellow-600 !tw-text-xs !tw-px-2.5 tw-rounded ng-scope" ng-if="listing.sponsored">
-
-  Sponsored
-</span><!-- end ngIf: listing.sponsored -->
-<!-- ngIf: listing.editors_choice --><span class="!tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-purple-50 tw-text-purple-600 !tw-text-xs !tw-px-2.5 tw-rounded ng-scope" ng-if="listing.editors_choice">
-
-  Editor's Choice
-</span><!-- end ngIf: listing.editors_choice -->
-<!-- ngIf: listing.invest -->
 </div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Revenue</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $160K</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Profit</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $51.7K</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Profit Multiple</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">4.1x</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Age</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">12 years</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">SaaS</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Industry</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Internet</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-hidden @3xl:tw-block tw-leading-tight tw-font-medium tw-font-mon tw-text-black">Asking price</p>
+<div class="tw-flex tw-flex-wrap tw-items-baseline tw-gap-2">
+<span class="tw-order-1 @3xl:tw-order-2 tw-text-xl @3xl:tw-text-2xl tw-leading-none @3xl:tw-leading-tight tw-text-green-700 tw-font-bold tw-font-mon tw-whitespace-nowrap">USD $2,520,000</span>
+<span class="tw-order-2 @3xl:tw-order-1 tw-font-medium tw-font-mon tw-text-gray-400 tw-line-through">USD $3,500,000</span>
+</div>
+<div class="tw-w-fit !tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-emerald-50 tw-text-emerald-600 !tw-text-xs !tw-px-2.5 tw-rounded">
+<svg class="tw-size-2.5" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/solid/arrow-down-46cbedbb.svg#svg" xlink:href="https://flippa.com/assets/icons/library/solid/arrow-down-46cbedbb.svg#svg"></use> </svg>
+  Reduced 28%
+</div>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_11816135">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/11816135-social-media-entertainment-business-founded-in-2014-generating-2m-in-revenue-with-a-33-profit-margin-operates-multiple-websites-in-the-online-dating-sector">
+    View Listing
+</a></div>
+</div>
+</div>
+</li>
+<li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-14025709">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-primary-900 tw-text-white">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Listed by Partner Broker
+  </p>
+<img alt="Broker Placeholder" class="tw-size-12 @3xl:tw-size-16 tw-shrink-0 tw-rounded-full tw-object-cover tw-border-2 !tw-border-solid tw-border-white tw-bg-white tw-shadow-md" loading="lazy" src="https://static2.flippa.com/avatar_placeholder.png"/>
+</div>
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/14025709-micro-saas-vectorization-tool-earning-subscription-ads-revenue">
+          SaaS | Design and Style
+        </a>
+</h4>
+<div class="tw-flex tw-flex-wrap tw-items-center tw-gap-1.5">
+<div class="">
+<div class="!tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-bg-gray-100 !tw-text-gray-900 !tw-text-xs !tw-px-2.5 tw-relative tw-gap-2 tw-rounded-md tw-py-1">
+    Data Verified
+  <button aria-label="Google Analytics" class="tw-flex tw-p-0 tw-border-0 tw-bg-transparent" data-title="Google Analytics" data-tooltip-ready="" data-trigger="hover" rel="tooltip" type="button">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="18" viewbox="0 0 45 40" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M25.3335 4.77273V34.7727C25.3335 38.1295 27.6494 40 30.1062 40C32.379 40 34.879 38.4091 34.879 34.7727V5C34.879 1.92273 32.6063 0 30.1062 0C27.6062 0 25.3335 2.12045 25.3335 4.77273Z" fill="#F9AB00"></path>
+<path d="M12.8335 20V34.7727C12.8335 38.1296 15.1494 40 17.6062 40C19.879 40 22.379 38.4091 22.379 34.7727V20.2273C22.379 17.15 20.1063 15.2273 17.6062 15.2273C15.1062 15.2273 12.8335 17.3477 12.8335 20Z" fill="#E37400"></path>
+<path d="M5.10625 40C7.74216 40 9.879 37.8632 9.879 35.2273C9.879 32.5914 7.74216 30.4545 5.10625 30.4545C2.47033 30.4545 0.333496 32.5914 0.333496 35.2273C0.333496 37.8632 2.47033 40 5.10625 40Z" fill="#E37400"></path>
+</svg>
+<span class="popper-tooltip tw-hidden tw-text-sm tw-absolute tw-bg-slate-950 tw-text-white tw-font-light tw-font-sans tw-max-w-72 tw-text-center tw-rounded-md tw-p-2.5" id="tooltip-content">Google Analytics<div class="popper-arrow" data-popper-arrow=""></div></span></button>
+</div>
+</div>
+</div>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">Micro SaaS Vectorization Tool Earning Subscription &amp; Ads revenue! </p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>United Kingdom</span>
+</div>
+</div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Revenue</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $554</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Profit</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $386</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Profit Multiple</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">1.6x</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Age</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">2 years</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">SaaS</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Industry</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Design and Style</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-hidden @3xl:tw-block tw-leading-tight tw-font-medium tw-font-mon tw-text-black">Asking price</p>
+<p class="tw-text-xl @3xl:tw-text-2xl tw-leading-none @3xl:tw-leading-tight tw-text-oxford-900 @3xl:tw-text-black tw-font-bold tw-font-mon tw-whitespace-nowrap !tw-mb-0">USD $7,500</p>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_14025709">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/14025709-micro-saas-vectorization-tool-earning-subscription-ads-revenue">
+    View Listing
+</a></div>
+</div>
+</div>
+</li>
+<li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-14178878">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-gradient-to-r tw-from-primary-200/35 tw-to-primary-200/50 tw-text-primary-600">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Marketplace · Listed by Owner
+  </p>
+</div>
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/14178878-established-newbie-friendly-website-business-2000-mo-profit-high-growth-potential-no-marketing-cost-easy-to-operate-sign-nda-watch-marketing-demo">
+          SaaS | Internet
+        </a>
+</h4>
+<div class="tw-flex tw-flex-wrap tw-items-center tw-gap-1.5">
+<div class="">
+<div class="!tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-bg-gray-100 !tw-text-gray-900 !tw-text-xs !tw-px-2.5 tw-relative tw-gap-2 tw-rounded-md tw-py-1">
+    Data Verified
+  <button aria-label="Paypal" class="tw-flex tw-p-0 tw-border-0 tw-bg-transparent" data-title="Paypal" data-tooltip-ready="" data-trigger="hover" rel="tooltip" type="button">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="40" viewbox="0 0 33 40" width="33" xmlns="http://www.w3.org/2000/svg">
+<path d="M9.37459 38.644L10.0494 34.2406L8.54625 34.2049H1.36865L6.35672 1.71256C6.37157 1.61328 6.42065 1.52279 6.49502 1.45758C6.56938 1.39237 6.66408 1.35679 6.76185 1.35732H18.8643C22.8821 1.35732 25.6548 2.21625 27.1025 3.91158C27.7811 4.70689 28.2134 5.53799 28.4224 6.45259C28.6417 7.41226 28.6456 8.55883 28.4314 9.95725L28.4159 10.0593V10.9554L29.0946 11.3504C29.6127 11.62 30.0784 11.9848 30.4687 12.4267C31.0493 13.1067 31.4248 13.9709 31.5835 14.9955C31.7473 16.0493 31.6931 17.3032 31.4248 18.7229C31.1151 20.3559 30.6145 21.7782 29.9384 22.942C29.3419 23.9846 28.5399 24.8875 27.5837 25.593C26.6857 26.2478 25.6187 26.7449 24.4123 27.063C23.2434 27.3758 21.9106 27.5335 20.4487 27.5335H19.5068C18.8333 27.5335 18.1792 27.7827 17.6657 28.2294C17.1529 28.6809 16.8127 29.3047 16.7057 29.9897L16.6348 30.3861L15.4426 38.1469L15.3884 38.4319C15.3742 38.522 15.3497 38.5671 15.3136 38.5976C15.2786 38.627 15.2349 38.6434 15.1897 38.644H9.37459Z" fill="#253B80"></path>
+<path d="M29.7378 10.1627C29.7017 10.4 29.6604 10.6425 29.614 10.8917C28.018 19.3101 22.5577 22.2182 15.5839 22.2182H12.0332C11.1803 22.2182 10.4617 22.8545 10.3288 23.7187L8.51083 35.5635L7.99602 38.921C7.97551 39.0542 7.98334 39.1904 8.01897 39.3202C8.0546 39.4499 8.11718 39.5702 8.2024 39.6728C8.28762 39.7753 8.39347 39.8577 8.51264 39.9142C8.63181 39.9706 8.76149 39.9999 8.89274 40H15.1904C15.9362 40 16.5697 39.4433 16.6871 38.6877L16.749 38.359L17.9347 30.6286L18.0109 30.2045C18.127 29.4463 18.7618 28.8896 19.5075 28.8896H20.4494C26.5509 28.8896 31.3274 26.3446 32.7235 18.98C33.3066 15.9035 33.0047 13.3347 31.4616 11.528C30.9725 10.9691 30.3884 10.5064 29.7378 10.1627Z" fill="#179BD7"></path>
+<path d="M28.0676 9.47874C27.558 9.32729 27.0396 9.20908 26.5155 9.12483C25.4798 8.96132 24.4331 8.88286 23.3853 8.89021H13.8995C13.5385 8.88993 13.1893 9.02233 12.9151 9.26349C12.6408 9.50465 12.4596 9.83865 12.4041 10.2051L10.3862 23.3357L10.3281 23.7187C10.391 23.3007 10.5974 22.9196 10.91 22.6444C11.2226 22.3692 11.6208 22.218 12.0325 22.2182H15.5833C22.557 22.2182 28.0173 19.3087 29.6133 10.8917C29.6611 10.6425 29.7011 10.4 29.7372 10.1627C29.316 9.93581 28.8771 9.7456 28.425 9.59406C28.3065 9.55366 28.1873 9.51521 28.0676 9.47874Z" fill="#222D65"></path>
+<path d="M12.4042 10.2051C12.4592 9.83855 12.6404 9.50439 12.9148 9.26335C13.1891 9.02232 13.5386 8.89039 13.8996 8.89154H23.3855C24.5093 8.89154 25.5582 8.9671 26.5156 9.12616C27.1634 9.23076 27.8023 9.3872 28.4264 9.59406C28.8974 9.75445 29.3348 9.944 29.7386 10.1627C30.2134 7.05173 29.7347 4.93356 28.0974 3.01554C26.2924 0.904 23.0345 0 18.8658 0H6.76332C5.91176 0 5.18536 0.636246 5.05375 1.50181L0.0127859 34.3281C-0.0106941 34.4805 -0.00176074 34.6364 0.0389714 34.7849C0.0797035 34.9334 0.151268 35.0711 0.248741 35.1885C0.346215 35.3059 0.467285 35.4002 0.603622 35.4649C0.73996 35.5297 0.88833 35.5633 1.03853 35.5635H8.5103L10.3863 23.3357L12.4042 10.2051Z" fill="#253B80"></path>
+</svg>
+<span class="popper-tooltip tw-hidden tw-text-sm tw-absolute tw-bg-slate-950 tw-text-white tw-font-light tw-font-sans tw-max-w-72 tw-text-center tw-rounded-md tw-p-2.5" id="tooltip-content">Paypal<div class="popper-arrow" data-popper-arrow=""></div></span></button>
+</div>
+</div>
+</div>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">Established Newbie-Friendly Website Business | $2000/mo Profit | High Growth Potential | No Marketing Cost | Easy to Operate | Sign NDA &amp; Watch Marketing Demo
+</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>India</span>
+</div>
+</div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Revenue</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $4.37K</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Profit</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $2.02K</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Profit Multiple</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">1.4x</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Age</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">8 years</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">SaaS</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Industry</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Internet</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-hidden @3xl:tw-block tw-leading-tight tw-font-medium tw-font-mon tw-text-black">Auction</p>
+<p class="tw-text-xl @3xl:tw-text-2xl tw-leading-none @3xl:tw-leading-tight tw-text-oxford-900 @3xl:tw-text-black tw-font-bold tw-font-mon tw-whitespace-nowrap !tw-mb-0">USD $4,000</p>
+<div class="tw-w-fit !tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-orange-50 !tw-text-orange-800 !tw-text-xs !tw-px-2.5 tw-rounded">
+    21 bids · 4 days left
+</div>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_14178878">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/14178878-established-newbie-friendly-website-business-2000-mo-profit-high-growth-potential-no-marketing-cost-easy-to-operate-sign-nda-watch-marketing-demo">
+    View Listing
+</a></div>
+</div>
+</div>
+</li>
+<li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-13774133">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-gradient-to-r tw-from-primary-200/35 tw-to-primary-200/50 tw-text-primary-600">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Marketplace · Listed by Owner
+  </p>
+</div>
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/13774133-glammypet-is-an-ai-pet-grooming-saas-on-an-8-year-aged-domain-1-250-value-earn-recurring-income-from-groomer-subscriptions-ready-to-launch-business">
+          SaaS &amp; AI Marketplace | Luxury Pet Grooming Finder (GlamMyPet.com)
+        </a>
+</h4>
+<div class="tw-flex tw-flex-wrap tw-items-center tw-gap-1.5">
+<div class="">
+<div class="!tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-bg-gray-100 !tw-text-gray-900 !tw-text-xs !tw-px-2.5 tw-relative tw-gap-2 tw-rounded-md tw-py-1">
+    Data Verified
+  <button aria-label="Google Analytics" class="tw-flex tw-p-0 tw-border-0 tw-bg-transparent" data-title="Google Analytics" data-tooltip-ready="" data-trigger="hover" rel="tooltip" type="button">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="18" viewbox="0 0 45 40" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M25.3335 4.77273V34.7727C25.3335 38.1295 27.6494 40 30.1062 40C32.379 40 34.879 38.4091 34.879 34.7727V5C34.879 1.92273 32.6063 0 30.1062 0C27.6062 0 25.3335 2.12045 25.3335 4.77273Z" fill="#F9AB00"></path>
+<path d="M12.8335 20V34.7727C12.8335 38.1296 15.1494 40 17.6062 40C19.879 40 22.379 38.4091 22.379 34.7727V20.2273C22.379 17.15 20.1063 15.2273 17.6062 15.2273C15.1062 15.2273 12.8335 17.3477 12.8335 20Z" fill="#E37400"></path>
+<path d="M5.10625 40C7.74216 40 9.879 37.8632 9.879 35.2273C9.879 32.5914 7.74216 30.4545 5.10625 30.4545C2.47033 30.4545 0.333496 32.5914 0.333496 35.2273C0.333496 37.8632 2.47033 40 5.10625 40Z" fill="#E37400"></path>
+</svg>
+<span class="popper-tooltip tw-hidden tw-text-sm tw-absolute tw-bg-slate-950 tw-text-white tw-font-light tw-font-sans tw-max-w-72 tw-text-center tw-rounded-md tw-p-2.5" id="tooltip-content">Google Analytics<div class="popper-arrow" data-popper-arrow=""></div></span></button>
+</div>
+</div>
+</div>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">GlamMyPet is an AI Pet Grooming SaaS on an 8-Year Aged Domain ($1,250 Value). Earn recurring income from groomer subscriptions. Ready-to-launch business.</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>CA, United States</span>
+</div>
+</div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Revenue</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $2</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Profit</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $2</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Age</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">8 years</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">SaaS</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Industry</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Home and Garden</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-hidden @3xl:tw-block tw-leading-tight tw-font-medium tw-font-mon tw-text-black">Auction</p>
+<p class="tw-text-xl @3xl:tw-text-2xl tw-leading-none @3xl:tw-leading-tight tw-text-oxford-900 @3xl:tw-text-black tw-font-bold tw-font-mon tw-whitespace-nowrap !tw-mb-0">USD $105</p>
+<div class="tw-w-fit !tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-orange-50 !tw-text-orange-800 !tw-text-xs !tw-px-2.5 tw-rounded">
+    1 bid · 7 days left
+</div>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_13774133">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/13774133-glammypet-is-an-ai-pet-grooming-saas-on-an-8-year-aged-domain-1-250-value-earn-recurring-income-from-groomer-subscriptions-ready-to-launch-business">
+    View Listing
+</a></div>
+</div>
+</div>
+</li>
+<li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-13829251">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-gradient-to-r tw-from-primary-200/35 tw-to-primary-200/50 tw-text-primary-600">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Marketplace · Listed by Owner
+  </p>
+</div>
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/13829251-profitable-3d-product-design-saas-in-the-generative-ai-space-with-1k-mrr-and-growing">
+          SaaS | AI Product Design Platform | Lightloop.io
+        </a>
+</h4>
+<div class="tw-flex tw-flex-wrap tw-items-center tw-gap-1.5">
+<div class="">
+<div class="!tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-bg-gray-100 !tw-text-gray-900 !tw-text-xs !tw-px-2.5 tw-relative tw-gap-2 tw-rounded-md tw-py-1">
+    Data Verified
+  <button aria-label="Stripe" class="tw-flex tw-p-0 tw-border-0 tw-bg-transparent" data-title="Stripe" data-tooltip-ready="" data-trigger="hover" rel="tooltip" type="button">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="18" viewbox="0 0 18 18" width="18" xmlns="http://www.w3.org/2000/svg">
+<rect fill="#635BFF" height="18" rx="4" width="18"></rect>
+<path clip-rule="evenodd" d="M8.28921 6.97802C8.28921 6.54945 8.64199 6.38462 9.22629 6.38462C10.0642 6.38462 11.1225 6.63736 11.9604 7.08791V4.50549C11.0453 4.14286 10.1413 4 9.22629 4C6.98831 4 5.5 5.16484 5.5 7.10989C5.5 10.1429 9.68932 9.65934 9.68932 10.967C9.68932 11.4725 9.24834 11.6374 8.63097 11.6374C7.71593 11.6374 6.54733 11.2637 5.62127 10.7582V13.3736C6.64655 13.8132 7.68286 14 8.63097 14C10.9241 14 12.5006 12.8681 12.5006 10.9011C12.4896 7.62637 8.28921 8.20879 8.28921 6.97802Z" fill="white" fill-rule="evenodd"></path>
+</svg>
+<span class="popper-tooltip tw-hidden tw-text-sm tw-absolute tw-bg-slate-950 tw-text-white tw-font-light tw-font-sans tw-max-w-72 tw-text-center tw-rounded-md tw-p-2.5" id="tooltip-content">Stripe<div class="popper-arrow" data-popper-arrow=""></div></span></button>
+</div>
+</div>
+</div>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">Profitable 3D product design SaaS in the generative AI space with $1K+ MRR and growing.</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>Canada</span>
+</div>
+</div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Revenue</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $1.45K</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Profit</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $1.4K</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Age</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">&lt;1 year</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">SaaS</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Industry</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Business</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-hidden @3xl:tw-block tw-leading-tight tw-font-medium tw-font-mon tw-text-black">Auction</p>
+<p class="tw-text-xl @3xl:tw-text-2xl tw-leading-none @3xl:tw-leading-tight tw-text-oxford-900 @3xl:tw-text-black tw-font-bold tw-font-mon tw-whitespace-nowrap !tw-mb-0">USD $9,000</p>
+<div class="tw-w-fit !tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-orange-50 !tw-text-orange-800 !tw-text-xs !tw-px-2.5 tw-rounded">
+    Starting Price
+</div>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_13829251">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/13829251-profitable-3d-product-design-saas-in-the-generative-ai-space-with-1k-mrr-and-growing">
+    View Listing
+</a></div>
+</div>
+</div>
+</li></ul><span id="filters-show-results-count">Show 671 results</span><captcha-widgets></captcha-widgets><script src="chrome-extension://kjmkgkdkpedkejedfhmfcenooemhbpbo/content/captcha/turnstile/hunter.js" data-ts-input="cf-turnstile-response"></script></body></html>"""
+
+# Two cards the canary page did not happen to carry, from a plain-HTTP capture
+# of /search the same day: an open-to-offers listing (a price GUIDE, which is
+# a range and not an asking price) and a first-access listing whose card has
+# a countdown strip below the price column.
+VARIANTS_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Online Businesses for Sale | Flippa</title><link rel="stylesheet" href="https://static.flippa.com/assets/application-0.css"><script src="https://static.flippa.com/assets/turbo-0.js"></script></head><body><span class="tw-text-gray-400 peer-checked:tw-text-primary-600 tw-text-xs" id="listing-category-count-saas">676</span><ul><li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-12282016">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-primary-900 tw-text-white">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Listed by Partner Broker
+  </p>
+<img alt="Broker Placeholder" class="tw-size-12 @3xl:tw-size-16 tw-shrink-0 tw-rounded-full tw-object-cover tw-border-2 !tw-border-solid tw-border-white tw-bg-white tw-shadow-md" loading="lazy" src="https://static2.flippa.com/avatar_placeholder.png"/>
+</div>
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/12282016-ai-powered-child-safety-saas-with-50-state-predator-database-integration-100-functional-tech-98-margin-potential-and-untapped-commercial-market">
+          Child Overwatch
+        </a>
+</h4>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">AI-powered child safety SaaS with 50-state predator database integration, 100% functional tech, 98% margin potential, and untapped commercial market</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>CA, United States</span>
+</div>
+</div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Revenue</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">N/A</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Age</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">1 year</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Saas &amp; Software Projects</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Industry</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Business</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-text-xl tw-leading-tight tw-text-black tw-font-bold tw-font-mon !tw-mb-0">Open to Offers</p>
+<div class="tw-w-fit !tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-gray-100 !tw-text-gray-900 tw-rounded-md !tw-px-3 !tw-text-sm">
+  Price Guide: USD $75,000 - USD $100,000
+</div>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_12282016">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/12282016-ai-powered-child-safety-saas-with-50-state-predator-database-integration-100-functional-tech-98-margin-potential-and-untapped-commercial-market">
+    View Listing
+</a></div>
+</div>
+</div>
+</li>
+<li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-14273497">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-oxford-900 tw-text-gray-100">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Brokered by Flippa
+  </p>
+<img alt="Broker Placeholder" class="tw-size-12 @3xl:tw-size-16 tw-shrink-0 tw-rounded-full tw-object-cover tw-border-2 !tw-border-solid tw-border-white tw-bg-white tw-shadow-md" loading="lazy" src="https://static2.flippa.com/avatar_placeholder.png"/>
+</div>
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/14273497-3-6m-followers-235k-profit-85-margin-2-hrs-week-wellness-social-portfolio">
+          Facebook Account | Health and Beauty
+        </a>
+</h4>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">3.6M+ Followers | $235K Profit | ~85% Margin | 2 Hrs/Week | Wellness Social Portfolio</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>FL, United States</span>
+</div>
+</div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Revenue</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $31.9K</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Profit</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">USD $14K</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Profit Multiple</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">1.6x</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Age</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">&lt;1 year</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Facebook Account</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Industry</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Health and Beauty</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-hidden @3xl:tw-block tw-leading-tight tw-font-medium tw-font-mon tw-text-black">Asking price</p>
+<p class="tw-text-xl @3xl:tw-text-2xl tw-leading-none @3xl:tw-leading-tight tw-text-oxford-900 @3xl:tw-text-black tw-font-bold tw-font-mon tw-whitespace-nowrap !tw-mb-0">USD $200,000</p>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_14273497">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/14273497-3-6m-followers-235k-profit-85-margin-2-hrs-week-wellness-social-portfolio">
+    View Listing
+</a></div>
+</div>
+</div>
+<div class="tw-min-h-11 @3xl:tw-h-11 tw-px-5 @3xl:tw-px-6 tw-py-2 tw-rounded-b-xl tw-font-mon tw-flex tw-items-center tw-justify-between @3xl:tw-justify-center tw-gap-2.5 @3xl:tw-gap-5 tw-bg-primary-100 tw-text-primary-900">
+<div class="tw-flex tw-items-center tw-gap-2.5 tw-min-w-0">
+<svg class="tw-size-4 tw-shrink-0" fill="none" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/solid/lock-0237c35e.svg#svg" xlink:href="https://flippa.com/assets/icons/library/solid/lock-0237c35e.svg#svg"></use> </svg>
+<p class="tw-text-xs @3xl:tw-text-sm tw-leading-snug !tw-mb-0">
+<a class="tw-relative !tw-text-primary-900 !tw-underline tw-font-medium" data-turbo="false" href="https://flippa.com/product/premium">
+          Purchase
+          <span class="tw-font-bold">First Access</span>
 </a>
-<a class="!tw-no-underline GTM-search-result-card tw-space-y-2.5 tw-w-full tw-min-w-0" href="https://flippa.com/12857417" ng-href="https://flippa.com/12857417">
-<h6 class="!tw-text-xl !tw-font-semibold tw-font-mon tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0 ng-binding">SaaS | Health and Beauty</h6>
-<div class="tw-flex tw-flex-wrap tw-items-center tw-gap-2.5">
-<!-- ngIf: listing.display_verification_badge --><div class="tw-z-10 ng-scope" ng-if="listing.display_verification_badge">
-<div class="tw-inline-flex tw-flex-wrap tw-items-center tw-gap-2.5 tw-rounded-full tw-border tw-border-solid tw-border-gray-300 tw-px-2.5 tw-py-1.5">
-<span class="tw-text-primary-700 tw-text-xs tw-font-semibold tw-font-mon">Verified Listing</span>
-<!-- ngIf: listing.manually_vetted --><div class="tw-inline-flex ng-scope" data-title="The Flippa vetting team or the broker has verified this listing to ensure accuracy of the stated financial and operational performance." ng-if="listing.manually_vetted" rel="tooltip">
+        to view this listing before everyone else. Goes public on
+        <strong><span class="@3xl:tw-hidden">23 Oct</span><span class="tw-hidden @3xl:tw-inline">Oct 23, 2026</span></strong>
+</p>
+</div>
+<div class="tw-size-14 tw-flex tw-flex-col tw-justify-center tw-overflow-hidden tw-text-white tw-text-center tw-whitespace-nowrap tw-bg-blue-500 tw-transition-width tw-duration-600 tw-ease-in-out tw-rounded-full tw-shrink-0" style="background:
+  radial-gradient(closest-side, white 79%, transparent 80% 100%),
+  conic-gradient(#003CAF 56.99999999999999%,#D3DBE3 0);
+}">
+<span class="tw-text-black tw-font-semibold"><div class="tw-leading-none tw-font-bold tw-text-primary-900 tw-font-mon">9</div><div class="!tw-text-[7px] tw-leading-tight tw-font-semibold tw-uppercase tw-text-primary-900 tw-font-mon">Days Left</div></span>
+</div>
+</div>
+</li></ul><span id="filters-show-results-count">Show 6,073 results</span></body></html>"""
 
-</div><!-- end ngIf: listing.manually_vetted -->
-<!-- ngRepeat: badge in listing.integration_icons --><img class="tw-size-3 tw-shrink-0 ng-scope" data-title="" ng-repeat="badge in listing.integration_icons" ng-src="https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg" rel="tooltip" src="https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg"/><!-- end ngRepeat: badge in listing.integration_icons --><img class="tw-size-3 tw-shrink-0 ng-scope" data-title="" ng-repeat="badge in listing.integration_icons" ng-src="https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg" rel="tooltip" src="https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg"/><!-- end ngRepeat: badge in listing.integration_icons -->
+# The last page of the canary's own filter (page 14 of a 676-match listing):
+# a partial-equity sale with no price and a NEGATIVE monthly profit, and an
+# auction with no bids yet.
+LAST_PAGE_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Online Businesses for Sale | Flippa</title><link rel="stylesheet" href="https://static.flippa.com/assets/application-0.css"><script src="https://static.flippa.com/assets/turbo-0.js"></script></head><body><span class="tw-text-gray-400 peer-checked:tw-text-primary-600 tw-text-xs" id="listing-category-count-saas">676</span><ul><li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-12274326">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-gradient-to-r tw-from-primary-200/35 tw-to-primary-200/50 tw-text-primary-600">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Marketplace · Listed by Owner
+  </p>
 </div>
-</div><!-- end ngIf: listing.display_verification_badge -->
-<!-- ngIf: listing.country_name --><div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-800 ng-scope" ng-if="listing.country_name">
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/12274326-25-of-evaficy-com-mvp-qa-test-cases-generator-ai-integration-and-editor">
+          Evaficy Smart Test
+        </a>
+</h4>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">25% of Evaficy.com MVP QA test cases generator(AI integration) and editor.</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>Romania</span>
+</div>
+</div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Revenue</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">N/A</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Profit</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">-USD $9</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Age</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">1 year</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">SaaS</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Industry</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Internet</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-text-xl @3xl:tw-text-2xl tw-leading-none @3xl:tw-leading-tight tw-text-oxford-900 @3xl:tw-text-black tw-font-bold tw-font-mon tw-whitespace-nowrap !tw-mb-0">
+  Partial Sale: 25% Equity
+</p>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_12274326">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/12274326-25-of-evaficy-com-mvp-qa-test-cases-generator-ai-integration-and-editor">
+    View Listing
+</a></div>
+</div>
+</div>
+</li>
+<li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-14319943">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-gradient-to-r tw-from-primary-200/35 tw-to-primary-200/50 tw-text-primary-600">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Marketplace · Listed by Owner
+  </p>
+</div>
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/14319943-production-ready-space-tech-saas-for-satellite-risk-monitoring-orbital-data-visualization-and-conjunction-analysis">
+          Orbital Guard
+        </a>
+</h4>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">Production-ready space-tech SaaS for satellite risk monitoring, orbital data visualization, and conjunction analysis.</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>Pakistan</span>
+</div>
+</div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Revenue</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">N/A</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Monthly Profit</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">N/A</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Age</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">&lt;1 year</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">SaaS</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Industry</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Internet</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-hidden @3xl:tw-block tw-leading-tight tw-font-medium tw-font-mon tw-text-black">Auction</p>
+<p class="tw-text-xl @3xl:tw-text-2xl tw-leading-none @3xl:tw-leading-tight tw-text-oxford-900 @3xl:tw-text-black tw-font-bold tw-font-mon tw-whitespace-nowrap !tw-mb-0">USD $500</p>
+<div class="tw-w-fit !tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-orange-50 !tw-text-orange-800 !tw-text-xs !tw-px-2.5 tw-rounded">
+    Starting Price
+</div>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_14319943">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/14319943-production-ready-space-tech-saas-for-satellite-risk-monitoring-orbital-data-visualization-and-conjunction-analysis">
+    View Listing
+</a></div>
+</div>
+</div>
+</li></ul><span id="filters-show-results-count">Show 676 results</span></body></html>"""
 
-<span class="ng-binding">France</span>
-</div><!-- end ngIf: listing.country_name -->
+FR_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Entreprises en ligne à vendre | Flippa</title><link rel="stylesheet" href="https://static.flippa.com/assets/application-0.css"><script src="https://static.flippa.com/assets/turbo-0.js"></script></head><body><span class="tw-text-gray-400 peer-checked:tw-text-primary-600 tw-text-xs" id="listing-category-count-saas">676</span><ul><li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-11816135">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-oxford-900 tw-text-gray-100">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Négocié par Flippa
+  </p>
+<img alt="Broker Placeholder" class="tw-size-12 @3xl:tw-size-16 tw-shrink-0 tw-rounded-full tw-object-cover tw-border-2 !tw-border-solid tw-border-white tw-bg-white tw-shadow-md" loading="lazy" src="https://static2.flippa.com/avatar_placeholder.png"/>
 </div>
-<!-- ngIf: listing.scores -->
-<div><p class="tw-text-gray-900 tw-text-sm !tw-mb-0 ng-binding"> Profitable B2B SaaS for fitness coaches | €188k ARR run-rate | 94% gross margin | Growing +20% MoM | Proprietary algo &amp; real MOATs| Multilingual EN/FR/ES</p></div>
-<div class="tw-flex tw-items-center tw-flex-wrap tw-gap-x-8 tw-gap-y-2.5">
-<!-- ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Type</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">SaaS</div>
-</div><!-- end ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Industry</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">Health and Beauty</div>
-</div><!-- end ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Monetization</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">Services &amp; Subscriptions</div>
-</div><!-- end ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Site Age</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">3 years</div>
-</div><!-- end ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Net Profit</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">USD $13,202 p/mo</div>
-</div><!-- end ngRepeat: data in listing.key_data -->
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/fr/11816135-social-media-entertainment-business-founded-in-2014-generating-2m-in-revenue-with-a-33-profit-margin-operates-multiple-websites-in-the-online-dating-sector" rel="nofollow">
+          SaaS | Internet
+        </a>
+</h4>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">Entreprise de divertissement sur les réseaux sociaux fondée en 2014, générant un chiffre d'affaires de 2 millions de dollars avec une marge bénéficiaire de 33 %. Elle exploite plusieurs sites web dans le secteur des rencontres en ligne.</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>Canada</span>
 </div>
-</a>
-<hr class="@3xl:tw-hidden !tw-m-0 !tw-border-gray-300"/>
-<div class="tw-shrink-0">
-<div class="tw-flex tw-flex-col tw-h-full tw-justify-between @3xl:tw-items-end @3xl:tw-text-right">
-<!-- ngIf: listing.invest -->
-<!-- ngIf: !listing.invest --><div class="tw-space-y-2 ng-scope" ng-if="!listing.invest">
-<div class="tw-flex tw-items-center @3xl:tw-justify-end tw-gap-2.5 tw-text-sm tw-font-medium tw-font-mon">
-<!-- ngIf: listing.bid_count -->
-<!-- ngIf: listing.bid_count -->
-<!-- ngIf: !listing.bid_count && !listing.open_to_offer --><span class="tw-text-gray-600 ng-binding ng-scope" ng-if="!listing.bid_count &amp;&amp; !listing.open_to_offer">Asking Price</span><!-- end ngIf: !listing.bid_count && !listing.open_to_offer -->
-<!-- ngIf: !listing.open_to_offer && listing.partial_sale -->
 </div>
-<!-- ngIf: listing.open_to_offer -->
-<!-- ngIf: !listing.price_dropped && !listing.open_to_offer -->
-<!-- ngIf: listing.price_dropped --><div class="ng-scope" ng-if="listing.price_dropped">
-<span class="tw-text-gray-500 tw-text-lg tw-font-semibold tw-font-mon tw-line-through"><del class="ng-binding">USD $927,250</del></span>
-<div class="tw-flex tw-flex-wrap tw-items-center md:tw-justify-between tw-gap-1.5">
-<span class="tw-text-xl tw-font-semibold tw-font-mon tw-text-emerald-600 ng-binding">USD $573,006</span>
-<span class="!tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-emerald-50 tw-text-emerald-600 !tw-text-xs !tw-px-2.5 tw-rounded @3xl:tw-order-first ng-binding">
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Revenu mensuel</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">144K € (EUR)</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Bénéfice mensuel</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">46,4K € (EUR)</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Multiple de profit</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">4.1x</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Ancienneté</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">12 années</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">SaaS</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Secteur</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Internet</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-hidden @3xl:tw-block tw-leading-tight tw-font-medium tw-font-mon tw-text-black">Prix demandé</p>
+<div class="tw-flex tw-flex-wrap tw-items-baseline tw-gap-2">
+<span class="tw-order-1 @3xl:tw-order-2 tw-text-xl @3xl:tw-text-2xl tw-leading-none @3xl:tw-leading-tight tw-text-green-700 tw-font-bold tw-font-mon tw-whitespace-nowrap">2 262 363 € (EUR)</span>
+<span class="tw-order-2 @3xl:tw-order-1 tw-font-medium tw-font-mon tw-text-gray-400 tw-line-through">3 142 171 € (EUR)</span>
+</div>
+<div class="tw-w-fit !tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-emerald-50 tw-text-emerald-600 !tw-text-xs !tw-px-2.5 tw-rounded">
+<svg class="tw-size-2.5" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/solid/arrow-down-46cbedbb.svg#svg" xlink:href="https://flippa.com/assets/icons/library/solid/arrow-down-46cbedbb.svg#svg"></use> </svg>
+  Réduit de 28%
+</div>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_11816135">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/fr/11816135-social-media-entertainment-business-founded-in-2014-generating-2m-in-revenue-with-a-33-profit-margin-operates-multiple-websites-in-the-online-dating-sector" rel="nofollow">
+    Voir l'Annonce
+</a></div>
+</div>
+</div>
+</li>
+<li class="tw-relative tw-w-full tw-@container tw-bg-white tw-rounded-xl tw-border tw-border-solid tw-border-gray-200 tw-shadow-sm hover:tw-shadow-lg tw-duration-200" id="listing-12282016">
+<div class="tw-rounded-t-xl tw-px-5 @3xl:tw-px-6 tw-font-mon tw-flex tw-items-center tw-justify-end tw-gap-2.5 @3xl:tw-gap-4 tw-h-9 @3xl:tw-h-10 tw-bg-primary-900 tw-text-white">
+<p class="tw-text-xs @3xl:tw-text-sm tw-font-medium !tw-mb-0">
+    Publié par un Broker Partenaire
+  </p>
+<img alt="Broker Placeholder" class="tw-size-12 @3xl:tw-size-16 tw-shrink-0 tw-rounded-full tw-object-cover tw-border-2 !tw-border-solid tw-border-white tw-bg-white tw-shadow-md" loading="lazy" src="https://static2.flippa.com/avatar_placeholder.png"/>
+</div>
+<div class="tw-p-5 @3xl:tw-p-6 tw-flex tw-flex-col tw-gap-5 @3xl:tw-grid @3xl:tw-grid-cols-[minmax(0,1fr)_auto] @3xl:tw-gap-x-16 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-3 @3xl:tw-gap-3.5 @3xl:tw-col-start-1 @3xl:tw-row-start-1">
+<h4 class="!tw-text-lg @3xl:!tw-text-xl !tw-font-bold tw-font-mon !tw-leading-normal !tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0">
+<a class="!tw-no-underline !tw-text-primary-700 after:tw-content-[''] after:tw-absolute after:tw-inset-0 GTM-search-result-card" data-turbo="false" href="https://flippa.com/fr/12282016-ai-powered-child-safety-saas-with-50-state-predator-database-integration-100-functional-tech-98-margin-potential-and-untapped-commercial-market" rel="nofollow">
+          Child Overwatch
+        </a>
+</h4>
+<p class="tw-text-sm @3xl:tw-text-base tw-text-gray-700 @3xl:tw-leading-normal tw-line-clamp-3 !tw-mb-0">Logiciel SaaS de sécurité pour enfants alimenté par l'IA, avec intégration de la base de données des prédateurs des 50 États, technologie fonctionnelle à 100 %, potentiel de marge de 98 % et marché commercial inexploité.</p>
+<div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-700">
+<svg class="tw-size-3.5 tw-shrink-0" fill="none" height="20" viewbox="0 0 20 20" width="20" xmlns="http://www.w3.org/2000/svg"> <use href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg" xlink:href="https://flippa.com/assets/icons/library/outline/map-pin-outline-12cd78af.svg#svg"></use> </svg>
+<span>CA, États-Unis</span>
+</div>
+</div>
+<div class="tw-min-w-0 @3xl:tw-col-start-1 @3xl:tw-row-start-3">
+<div class="tw-grid tw-grid-cols-3 tw-gap-x-3 tw-gap-y-2.5 @3xl:tw-flex @3xl:tw-flex-wrap @3xl:tw-gap-x-9 @3xl:max-xl:tw-gap-x-6 @3xl:tw-gap-y-4">
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Revenu mensuel</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">N/A</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Ancienneté</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">1 année</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Type</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Projets SaaS &amp; Logiciels</p>
+</div>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-gap-0.5 @3xl:tw-gap-1">
+<p class="tw-text-[11px] @5xl:tw-text-[13px] @6xl:tw-text-sm tw-text-gray-500 @3xl:tw-text-gray-600 !tw-mb-0 tw-truncate">Secteur</p>
+<p class="tw-text-sm @3xl:tw-text-[13px] @5xl:tw-text-[15px] @6xl:tw-text-base tw-font-bold tw-text-gray-800 tw-font-mon !tw-mb-0 tw-truncate">Entreprise</p>
+</div>
+</div>
+</div>
+<hr class="!tw-m-0 tw-border-0 tw-border-t tw-border-solid tw-border-gray-200 @3xl:tw-col-span-full @3xl:tw-row-start-2"/>
+<div class="tw-min-w-0 tw-flex tw-flex-col tw-items-start @3xl:tw-items-end tw-gap-2.5 @3xl:tw-col-start-2 @3xl:tw-row-start-1 @3xl:tw-self-start">
+<p class="tw-text-xl tw-leading-tight tw-text-black tw-font-bold tw-font-mon !tw-mb-0">Ouvert aux Offres</p>
+<div class="tw-w-fit !tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-gray-100 !tw-text-gray-900 tw-rounded-md !tw-px-3 !tw-text-sm">
+  Fourchette de Prix : 67 332 € (EUR) - 89 776 € (EUR)
+</div>
+</div>
+<div class="tw-mt-auto @3xl:tw-mt-0 @3xl:tw-col-start-2 @3xl:tw-row-start-3 @3xl:tw-self-center @3xl:tw-justify-self-end">
+<div class="tw-relative tw-flex tw-items-center tw-gap-2.5">
+<div class="tw-contents" id="watch_button_12282016">
+</div>
+<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-flex-1 @3xl:tw-flex-none GTM-search-result-card" data-turbo="false" href="https://flippa.com/fr/12282016-ai-powered-child-safety-saas-with-50-state-predator-database-integration-100-functional-tech-98-margin-potential-and-untapped-commercial-market" rel="nofollow">
+    Voir l'Annonce
+</a></div>
+</div>
+</div>
+</li></ul><span id="filters-show-results-count">Afficher 6 073 résultats</span></body></html>"""
 
-                  Reduced 38%
-                </span>
-</div>
-</div><!-- end ngIf: listing.price_dropped -->
-<!-- ngIf: listing.show_multiple --><div class="ng-scope" ng-if="listing.show_multiple">
-<a class="tw-flex tw-items-center @3xl:tw-justify-end tw-gap-1 tw-text-primary-700 tw-text-sm" href="/data-insights?buy_sell=searchpage" target="_blank">
-                View insights on multiples
+# Page 15 of that same 676-match filter: HTTP 200, no cards, and the site's
+# own count still in the filter panel.
+PAST_END_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Online Businesses for Sale | Flippa</title><link rel="stylesheet" href="https://static.flippa.com/assets/application-0.css"><script src="https://static.flippa.com/assets/turbo-0.js"></script></head><body><span class="tw-text-gray-400 peer-checked:tw-text-primary-600 tw-text-xs" id="listing-category-count-saas">676</span><ul></ul><span id="filters-show-results-count">Show 676 results</span></body></html>"""
 
-</a>
-<div class="tw-inline-flex tw-rounded-full tw-items-center tw-gap-1.5 tw-border tw-border-solid tw-border-gray-300 tw-text-xs tw-font-semibold tw-text-gray-500 tw-px-1.5 tw-h-5">
-<span>Multiple:</span>
-<span class="ng-binding">3.6x Profit</span>
-<span class="tw-h-full tw-w-px tw-border-solid tw-border-0 tw-border-l tw-border-gray-300"></span>
-<span class="ng-binding">2.9x Revenue</span>
-</div>
-</div><!-- end ngIf: listing.show_multiple -->
-</div><!-- end ngIf: !listing.invest -->
-<div class="tw-flex tw-flex-col @sm:tw-flex-row tw-items-center tw-gap-2.5 !tw-mt-5">
-<!-- ngIf: (listing.early_access_days_remaining < 1) || (false) --><ng-container class="tw-w-full @3xl:tw-w-32 ng-scope" ng-if="(listing.early_access_days_remaining &lt; 1) || (false)">
-<span class="watch_12857417">
-<!-- ngIf: listing.watched -->
-<!-- ngIf: !listing.watched --><a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-transparent hover:!tw-bg-gray-100 hover:!tw-text-primary-700 focus:tw-ring-gray-100 disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:hover:!tw-bg-transparent disabled:!tw-text-gray-300 disabled:hover:!tw-text-gray-300 disabled:tw-pointer-events-none aria-disabled:tw-border-gray-300 aria-disabled:hover:tw-border-gray-300 aria-disabled:hover:!tw-bg-transparent aria-disabled:!tw-text-gray-300 aria-disabled:hover:!tw-text-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full !tw-text-nowrap tw-border-primary-700 !tw-text-primary-700 tw-w-full ng-scope" data-turbo="true" data-turbo-method="post" href="/watch_item?disabled_title=Watching&amp;enabled_title=Watch&amp;id=12857417&amp;origin=search&amp;return_to=%2F&amp;type=listing&amp;unwatch_classes=GTM-search-unwatch+tw-w-full&amp;view_partial=shared%2Fwatch_v2&amp;watch_classes=GTM-search-watch+tw-w-full&amp;locale=en" ng-if="!listing.watched" rel="nofollow">
-
-    Watch
-  </a><!-- end ngIf: !listing.watched -->
-</span>
-</ng-container><!-- end ngIf: (listing.early_access_days_remaining < 1) || (false) -->
-<div class="tw-w-full">
-<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-w-full !tw-text-nowrap GTM-search-result-card ng-binding" data-turbo="false" data-turbo-frame="_top" href="https://flippa.com/12857417" ng-href="https://flippa.com/12857417" rel="nofollow">
-                View Listing
-              </a>
-</div>
-</div>
-</div>
-</div>
-</div>
-<div class="tw-w-full tw-flex tw-flex-col @3xl:tw-flex-row tw-gap-4 tw-rounded-lg tw-border tw-border-solid tw-border-gray-300 tw-p-4 tw-shadow hover:tw-shadow-lg" id="listing-12230608">
-<a class="!tw-no-underline GTM-search-result-card tw-h-full tw-w-full @3xl:tw-max-w-72 tw-shrink-0 tw-flex-col" data-turbo="false" data-turbo-frame="_top" href="https://flippa.com/12230608" ng-href="https://flippa.com/12230608">
-<div class="tw-relative tw-group tw-rounded tw-shadow-sm tw-border tw-border-solid tw-border-gray-200">
-<img class="tw-aspect-21-9 lg:tw-aspect-video tw-w-full tw-h-full tw-object-cover tw-rounded" data-action="error-&gt;image-fallback#fallback" data-controller="image-fallback" data-image-fallback-default-image-value="https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg" ng-src="https://static2.flippa.com/blurred_thumbnail_2fbc9403-8b3e-77d6-4d1f-47b76f2baf5e.png" src="https://static2.flippa.com/blurred_thumbnail_2fbc9403-8b3e-77d6-4d1f-47b76f2baf5e.png"/>
-<!-- ngIf: listing.confidential --><div class="ng-scope" ng-if="listing.confidential">
-<div class="tw-absolute tw-top-0 tw-left-0 tw-w-full tw-h-full tw-flex tw-items-center tw-justify-center">
-<!-- ngIf: listing.invest -->
-<!-- ngIf: !listing.invest --><div class="tw-bg-primary-500 tw-p-2.5 tw-text-white tw-text-center tw-rounded-md tw-font-medium tw-font-mon ng-scope" ng-if="!listing.invest">
-        Confidential<br/>Sign NDA to view
-      </div><!-- end ngIf: !listing.invest -->
-</div>
-</div><!-- end ngIf: listing.confidential -->
-<!-- ngIf: listing.early_access_days_remaining > 0 -->
-</div>
-<div class="tw-hidden @3xl:tw-flex tw-flex-wrap tw-gap-2.5 tw-mt-2.5">
-<!-- ngIf: listing.managed_by_flippa -->
-<!-- ngIf: listing.super_seller -->
-<!-- ngIf: listing.broker_seller -->
-<!-- ngIf: listing.early_access_days_remaining > 0 -->
-<!-- ngIf: listing.sponsored --><span class="!tw-py-0.5 tw-inline-flex tw-font-medium tw-font-mon tw-items-center tw-gap-1 tw-bg-yellow-50 tw-text-yellow-600 !tw-text-xs !tw-px-2.5 tw-rounded ng-scope" ng-if="listing.sponsored">
-
-  Sponsored
-</span><!-- end ngIf: listing.sponsored -->
-<!-- ngIf: listing.editors_choice -->
-<!-- ngIf: listing.invest -->
-</div>
-</a>
-<a class="!tw-no-underline GTM-search-result-card tw-space-y-2.5 tw-w-full tw-min-w-0" href="https://flippa.com/12230608" ng-href="https://flippa.com/12230608">
-<h6 class="!tw-text-xl !tw-font-semibold tw-font-mon tw-text-primary-700 tw-truncate tw-whitespace-normal !tw-mb-0 ng-binding">SaaS | Design and Style</h6>
-<div class="tw-flex tw-flex-wrap tw-items-center tw-gap-2.5">
-<!-- ngIf: listing.display_verification_badge --><div class="tw-z-10 ng-scope" ng-if="listing.display_verification_badge">
-<div class="tw-inline-flex tw-flex-wrap tw-items-center tw-gap-2.5 tw-rounded-full tw-border tw-border-solid tw-border-gray-300 tw-px-2.5 tw-py-1.5">
-<span class="tw-text-primary-700 tw-text-xs tw-font-semibold tw-font-mon">Verified Listing</span>
-<!-- ngIf: listing.manually_vetted --><div class="tw-inline-flex ng-scope" data-title="The Flippa vetting team or the broker has verified this listing to ensure accuracy of the stated financial and operational performance." ng-if="listing.manually_vetted" rel="tooltip">
-
-</div><!-- end ngIf: listing.manually_vetted -->
-<!-- ngRepeat: badge in listing.integration_icons --><img class="tw-size-3 tw-shrink-0 ng-scope" data-title="" ng-repeat="badge in listing.integration_icons" ng-src="https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg" rel="tooltip" src="https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg"/><!-- end ngRepeat: badge in listing.integration_icons --><img class="tw-size-3 tw-shrink-0 ng-scope" data-title="" ng-repeat="badge in listing.integration_icons" ng-src="https://static.flippa.com/assets/search/paypal-icon-55288012.svg" rel="tooltip" src="https://static.flippa.com/assets/search/paypal-icon-55288012.svg"/><!-- end ngRepeat: badge in listing.integration_icons --><img class="tw-size-3 tw-shrink-0 ng-scope" data-title="" ng-repeat="badge in listing.integration_icons" ng-src="https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg" rel="tooltip" src="https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg"/><!-- end ngRepeat: badge in listing.integration_icons -->
-</div>
-</div><!-- end ngIf: listing.display_verification_badge -->
-<!-- ngIf: listing.country_name --><div class="tw-flex tw-items-center tw-gap-1 tw-text-sm tw-text-gray-800 ng-scope" ng-if="listing.country_name">
-
-<span class="ng-binding">Italy</span>
-</div><!-- end ngIf: listing.country_name -->
-</div>
-<!-- ngIf: listing.scores -->
-<div><p class="tw-text-gray-900 tw-text-sm !tw-mb-0 ng-binding">Profitable SaaS with $46K annual revenue, 40% margins, 1100 active subscribers, and 30K-user email list; low maintenance and primed for major scaling</p></div>
-<div class="tw-flex tw-items-center tw-flex-wrap tw-gap-x-8 tw-gap-y-2.5">
-<!-- ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Type</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">SaaS</div>
-</div><!-- end ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Industry</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">Design and Style</div>
-</div><!-- end ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Monetization</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">Affiliate Sales</div>
-</div><!-- end ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Site Age</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">5 years</div>
-</div><!-- end ngRepeat: data in listing.key_data --><div class="ng-scope" ng-repeat="data in listing.key_data">
-<div class="tw-text-gray-600 tw-text-xs ng-binding">Net Profit</div>
-<div class="tw-text-gray-800 tw-text-sm tw-font-semibold ng-binding">USD $551 p/mo</div>
-</div><!-- end ngRepeat: data in listing.key_data -->
-</div>
-</a>
-<hr class="@3xl:tw-hidden !tw-m-0 !tw-border-gray-300"/>
-<div class="tw-shrink-0">
-<div class="tw-flex tw-flex-col tw-h-full tw-justify-between @3xl:tw-items-end @3xl:tw-text-right">
-<!-- ngIf: listing.invest -->
-<!-- ngIf: !listing.invest --><div class="tw-space-y-2 ng-scope" ng-if="!listing.invest">
-<div class="tw-flex tw-items-center @3xl:tw-justify-end tw-gap-2.5 tw-text-sm tw-font-medium tw-font-mon">
-<!-- ngIf: listing.bid_count --><a class="tw-text-gray-600 ng-binding ng-scope" href="/auctions/12230608/bids" ng-href="/auctions/12230608/bids" ng-if="listing.bid_count">
-                1 bids
-              </a><!-- end ngIf: listing.bid_count -->
-<!-- ngIf: listing.bid_count --><span class="tw-text-gray-600 ng-binding ng-scope" ng-if="listing.bid_count">Asking Price</span><!-- end ngIf: listing.bid_count -->
-<!-- ngIf: !listing.bid_count && !listing.open_to_offer -->
-<!-- ngIf: !listing.open_to_offer && listing.partial_sale -->
-</div>
-<!-- ngIf: listing.open_to_offer -->
-<!-- ngIf: !listing.price_dropped && !listing.open_to_offer --><h5 class="ng-binding ng-scope" ng-if="!listing.price_dropped &amp;&amp; !listing.open_to_offer">USD $17,289</h5><!-- end ngIf: !listing.price_dropped && !listing.open_to_offer -->
-<!-- ngIf: listing.price_dropped -->
-<!-- ngIf: listing.show_multiple --><div class="ng-scope" ng-if="listing.show_multiple">
-<a class="tw-flex tw-items-center @3xl:tw-justify-end tw-gap-1 tw-text-primary-700 tw-text-sm" href="/data-insights?buy_sell=searchpage" target="_blank">
-                View insights on multiples
-
-</a>
-<div class="tw-inline-flex tw-rounded-full tw-items-center tw-gap-1.5 tw-border tw-border-solid tw-border-gray-300 tw-text-xs tw-font-semibold tw-text-gray-500 tw-px-1.5 tw-h-5">
-<span>Multiple:</span>
-<span class="ng-binding">2.6x Profit</span>
-<span class="tw-h-full tw-w-px tw-border-solid tw-border-0 tw-border-l tw-border-gray-300"></span>
-<span class="ng-binding">0.4x Revenue</span>
-</div>
-</div><!-- end ngIf: listing.show_multiple -->
-</div><!-- end ngIf: !listing.invest -->
-<div class="tw-flex tw-flex-col @sm:tw-flex-row tw-items-center tw-gap-2.5 !tw-mt-5">
-<!-- ngIf: (listing.early_access_days_remaining < 1) || (false) --><ng-container class="tw-w-full @3xl:tw-w-32 ng-scope" ng-if="(listing.early_access_days_remaining &lt; 1) || (false)">
-<span class="watch_12230608">
-<!-- ngIf: listing.watched -->
-<!-- ngIf: !listing.watched --><a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-transparent hover:!tw-bg-gray-100 hover:!tw-text-primary-700 focus:tw-ring-gray-100 disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:hover:!tw-bg-transparent disabled:!tw-text-gray-300 disabled:hover:!tw-text-gray-300 disabled:tw-pointer-events-none aria-disabled:tw-border-gray-300 aria-disabled:hover:tw-border-gray-300 aria-disabled:hover:!tw-bg-transparent aria-disabled:!tw-text-gray-300 aria-disabled:hover:!tw-text-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full !tw-text-nowrap tw-border-primary-700 !tw-text-primary-700 tw-w-full ng-scope" data-turbo="true" data-turbo-method="post" href="/watch_item?disabled_title=Watching&amp;enabled_title=Watch&amp;id=12230608&amp;origin=search&amp;return_to=%2F&amp;type=listing&amp;unwatch_classes=GTM-search-unwatch+tw-w-full&amp;view_partial=shared%2Fwatch_v2&amp;watch_classes=GTM-search-watch+tw-w-full&amp;locale=en" ng-if="!listing.watched" rel="nofollow">
-
-    Watch
-  </a><!-- end ngIf: !listing.watched -->
-</span>
-</ng-container><!-- end ngIf: (listing.early_access_days_remaining < 1) || (false) -->
-<div class="tw-w-full">
-<a class="tw-inline-flex tw-justify-center tw-items-center tw-gap-2 tw-font-medium !tw-font-mon !tw-no-underline focus:!tw-outline-0 focus-visible:!tw-outline-0 focus:!tw-ring-4 focus-visible:!tw-ring-4 tw-duration-200 tw-border tw-border-solid tw-cursor-pointer !tw-bg-primary-700 hover:!tw-bg-primary-800 !tw-text-white focus:tw-ring-primary-200 tw-border-primary-700 hover:tw-border-primary-800 disabled:!tw-bg-gray-300 disabled:hover:!tw-bg-gray-300 disabled:!tw-text-white disabled:tw-border-gray-300 disabled:hover:tw-border-gray-300 disabled:tw-pointer-events-none aria-disabled:!tw-bg-gray-300 aria-disabled:hover:!tw-bg-gray-300 aria-disabled:!tw-text-white aria-disabled:tw-border-gray-300 aria-disabled:tw-pointer-events-none !tw-text-sm tw-px-5 tw-py-2.5 !tw-rounded-full tw-w-full !tw-text-nowrap GTM-search-result-card ng-binding" data-turbo="false" data-turbo-frame="_top" href="https://flippa.com/12230608" ng-href="https://flippa.com/12230608" rel="nofollow">
-                View Listing
-              </a>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<script>
-  const STATE = {"results": [{"id": "12857417", "listing_url": "https://flippa.com/12857417", "title": " Profitable B2B SaaS for fitness coaches | €188k ARR run-rate | 94% gross margin | Growing +20% MoM | Proprietary algo & real MOATs| Multilingual EN/FR/ES", "summary": " Profitable B2B SaaS for fitness coaches | €188k ARR run-rate | 94% gross margin | Growing +20% MoM | Proprietary algo & real MOATs| Multilingual EN/FR/ES", "has_verified_traffic": true, "has_verified_revenue": false, "price": 573006, "bid_count": 0, "sale_method": "classified", "status": "open", "category": "Health and Beauty", "monetization": "Services & Subscriptions", "profit_average": "13,202", "end_at": "2027-05-18T23:16:28+10:00", "super_seller": false, "broker_seller": false, "sponsored": true, "editors_choice": true, "multiple": 3.6, "has_multiple?": true, "revenue_multiple": 2.9, "target_raise_amount": null, "ttm_revenue": null, "confidential": true, "primary_platform": null, "property_name": "Sign NDA to view more details →", "established_at": 3, "country_name": "France", "ready_made": false, "thumbnail_url": "https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg", "default_image": "https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg", "default_image_url": "https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg", "blurred_image_url": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "blurred_or_thumbnail_url": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "property_type": "SaaS", "watched": false, "scores": null, "beta_scores": null, "uniques_per_month": 511, "age_label": "Site Age", "formatted_age_in_years": "3 years", "sale_method_title": "Asking Price", "integrations": ["google_analytics", "stripe", "google_analytics", "google_analytics", "google_analytics"], "integration_icons": [{"tooltip_text": null, "path": "https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg", "provider": "google_analytics"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg", "provider": "stripe"}], "currency_label": "USD $", "protect_listing": false, "display_verification_badge": true, "all_verifications": [{"tooltip_text": "The Flippa vetting team or the broker has verified this listing to ensure accuracy of the stated financial and operational performance.", "path": "https://static.flippa.com/assets/search/verified-user-icon-4370f348.svg", "provider": "verified-listing"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg", "provider": "google_analytics"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg", "provider": "stripe"}], "manually_vetted": true, "early_access_listing": false, "early_access_percentage": "100%", "early_access_days_remaining": 0, "early_access_overlay_title_suffix": "in 0 Days", "early_access_open_at": "May 20, 2026", "viewer_has_early_access": null, "special_tags": true, "hover_image_url": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "basic_info": {"name": "SaaS | Health and Beauty", "hover_image": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "padlocked": true}, "open_listing": false, "confidential_thumbnail_url": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "confidential_overlay_class": "confidential-blurred-image-overlay", "display_confidential_label": "", "annual_organic_traffic": 690, "revenue_average": 16671, "authority_score": 8, "app_rating": null, "managed_by_flippa": true, "managed_by": "owner", "broker_name": null, "broker_avatar_url": null, "listing_category": "saas", "original_price": 927250, "price_dropped": true, "price_dropped_percent": 38, "under_offer": false, "badges": [{"text": "Managed by Flippa", "icon": "icons/library/logo/flippa-square.svg", "variant": "light_orange_oxford_text"}, {"text": "Sponsored", "icon": "icons/library/solid/star.svg", "variant": "light_yellow"}, {"text": "Editor's Choice", "icon": "icons/library/solid/thumbs-up.svg", "variant": "light_purple"}], "listing_watchable": true, "show_multiple": true, "invest": false, "action_class": "primary", "key_data": [{"label": "Type", "value": "SaaS"}, {"label": "Industry", "value": "Health and Beauty"}, {"label": "Monetization", "value": "Services & Subscriptions"}, {"label": "Site Age", "value": "3 years"}, {"label": "Net Profit", "value": "USD $13,202 p/mo"}], "open_to_offer": false, "partial_sale": false, "equity_sale_percentage": "100", "hide_profit": false, "domain_only?": false, "action_button_text": "View Listing", "original_price_text": "USD $927,250", "price_text": "USD $573,006", "target_raise_amount_text": null}, {"id": "12230608", "listing_url": "https://flippa.com/12230608", "title": "Profitable SaaS with $46K annual revenue, 40% margins, 1100 active subscribers, and 30K-user email list; low maintenance and primed for major scaling", "summary": "Profitable SaaS with $46K annual revenue, 40% margins, 1100 active subscribers, and 30K-user email list; low maintenance and primed for major scaling", "has_verified_traffic": true, "has_verified_revenue": false, "price": 17289, "bid_count": 1, "sale_method": "classified", "status": "open", "category": "Design and Style", "monetization": "Affiliate Sales", "profit_average": "551", "end_at": "2026-12-05T02:31:04+11:00", "super_seller": false, "broker_seller": false, "sponsored": true, "editors_choice": false, "multiple": 2.6, "has_multiple?": true, "revenue_multiple": 0.4, "target_raise_amount": null, "ttm_revenue": null, "confidential": true, "primary_platform": null, "property_name": "Sign NDA to view more details →", "established_at": 5, "country_name": "Italy", "ready_made": false, "thumbnail_url": "https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg", "default_image": "https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg", "default_image_url": "https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg", "blurred_image_url": "https://static2.flippa.com/blurred_thumbnail_2fbc9403-8b3e-77d6-4d1f-47b76f2baf5e.png", "blurred_or_thumbnail_url": "https://static2.flippa.com/blurred_thumbnail_2fbc9403-8b3e-77d6-4d1f-47b76f2baf5e.png", "property_type": "SaaS", "watched": false, "scores": null, "beta_scores": null, "uniques_per_month": 1368, "age_label": "Site Age", "formatted_age_in_years": "5 years", "sale_method_title": "Asking Price", "integrations": ["google_analytics", "paypal", "stripe", "google_analytics", "google_analytics", "google_analytics"], "integration_icons": [{"tooltip_text": null, "path": "https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg", "provider": "google_analytics"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/paypal-icon-55288012.svg", "provider": "paypal"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg", "provider": "stripe"}], "currency_label": "USD $", "protect_listing": false, "display_verification_badge": true, "all_verifications": [{"tooltip_text": "The Flippa vetting team or the broker has verified this listing to ensure accuracy of the stated financial and operational performance.", "path": "https://static.flippa.com/assets/search/verified-user-icon-4370f348.svg", "provider": "verified-listing"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg", "provider": "google_analytics"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/paypal-icon-55288012.svg", "provider": "paypal"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg", "provider": "stripe"}], "manually_vetted": true, "early_access_listing": false, "early_access_percentage": "100%", "early_access_days_remaining": 0, "early_access_overlay_title_suffix": "in 0 Days", "early_access_open_at": "Dec 26, 2025", "viewer_has_early_access": null, "special_tags": true, "hover_image_url": "https://static2.flippa.com/blurred_thumbnail_2fbc9403-8b3e-77d6-4d1f-47b76f2baf5e.png", "basic_info": {"name": "SaaS | Design and Style", "hover_image": "https://static2.flippa.com/blurred_thumbnail_2fbc9403-8b3e-77d6-4d1f-47b76f2baf5e.png", "padlocked": true}, "open_listing": false, "confidential_thumbnail_url": "https://static2.flippa.com/blurred_thumbnail_2fbc9403-8b3e-77d6-4d1f-47b76f2baf5e.png", "confidential_overlay_class": "confidential-blurred-image-overlay", "display_confidential_label": "", "annual_organic_traffic": 229, "revenue_average": 3244, "authority_score": 22, "app_rating": null, "managed_by_flippa": false, "managed_by": "owner", "broker_name": null, "broker_avatar_url": null, "listing_category": "saas", "original_price": null, "price_dropped": false, "price_dropped_percent": null, "under_offer": false, "badges": [{"text": "Sponsored", "icon": "icons/library/solid/star.svg", "variant": "light_yellow"}], "listing_watchable": true, "show_multiple": true, "invest": false, "action_class": "primary", "key_data": [{"label": "Type", "value": "SaaS"}, {"label": "Industry", "value": "Design and Style"}, {"label": "Monetization", "value": "Affiliate Sales"}, {"label": "Site Age", "value": "5 years"}, {"label": "Net Profit", "value": "USD $551 p/mo"}], "open_to_offer": false, "partial_sale": false, "equity_sale_percentage": "100", "hide_profit": false, "domain_only?": false, "action_button_text": "View Listing", "original_price_text": null, "price_text": "USD $17,289", "target_raise_amount_text": null}], "metadata": {"totalResults": 745, "timeoutDelay": 300, "totalRequests": 1}, "error?": false};
-</script><captcha-widgets></captcha-widgets><script src="chrome-extension://kjmkgkdkpedkejedfhmfcenooemhbpbo/content/captcha/turnstile/hunter.js" data-ts-input="cf-turnstile-response"></script></body></html>"""
-
-FR_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Entreprises en ligne à vendre | Flippa</title><link rel="alternate" hreflang="fr" href="https://flippa.com/fr/search"/><script src="https://static.flippa.com/assets/legacy-head.js"></script></head><body><div ng-controller="SearchV2_SearchController"></div><script>
-  const STATE = {"results": [{"id": "12857417", "listing_url": "https://flippa.com/fr/12857417", "title": " SaaS B2B rentable pour coachs sportifs | ARR annualisé de 188 k€ | Marge brute de 94 % | Croissance de 20 % par mois | Algorithme propriétaire et véritables avantages concurrentiels | Multilingue (EN/FR/ES)", "summary": " SaaS B2B rentable pour coachs sportifs | ARR annualisé de 188 k€ | Marge brute de 94 % | Croissance de 20 % par mois | Algorithme propriétaire et véritables avantages concurrentiels | Multilingue (EN/FR/ES)", "has_verified_traffic": true, "has_verified_revenue": false, "price": 380546, "bid_count": 0, "sale_method": "classified", "status": "open", "category": "Santé et beauté", "monetization": "Services et abonnements", "profit_average": "11 501", "end_at": "2027-05-18T23:16:28+10:00", "super_seller": false, "broker_seller": true, "sponsored": true, "editors_choice": true, "multiple": 2.8, "has_multiple?": true, "revenue_multiple": 2.2, "target_raise_amount": 0, "ttm_revenue": null, "confidential": true, "primary_platform": null, "property_name": "Signer un NDA pour voir plus de détails →", "established_at": 3, "country_name": "France", "ready_made": false, "thumbnail_url": "https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg", "default_image": "https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg", "default_image_url": "https://static.flippa.com/assets/search/placeholders/saas-ad80efb3.svg", "blurred_image_url": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "blurred_or_thumbnail_url": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "property_type": "SaaS", "watched": false, "scores": null, "beta_scores": null, "uniques_per_month": 517, "age_label": "Ancienneté", "formatted_age_in_years": "3 années", "sale_method_title": "Prix demandé", "integrations": ["google_analytics", "stripe", "google_analytics", "google_analytics", "google_analytics"], "integration_icons": [{"tooltip_text": null, "path": "https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg", "provider": "google_analytics"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg", "provider": "stripe"}], "currency_label": "EUR €", "protect_listing": false, "display_verification_badge": true, "all_verifications": [{"tooltip_text": "L'équipe de vérification Flippa ou le broker a vérifié cette annonce afin d'assurer l'exactitude des performances financières et opérationnelles indiquées.", "path": "https://static.flippa.com/assets/search/verified-user-icon-4370f348.svg", "provider": "verified-listing"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/google_analytics-icon-e61c7587.svg", "provider": "google_analytics"}, {"tooltip_text": null, "path": "https://static.flippa.com/assets/search/stripe-icon-9a799f07.svg", "provider": "stripe"}], "manually_vetted": true, "early_access_listing": false, "early_access_percentage": "100%", "early_access_days_remaining": 0, "early_access_overlay_title_suffix": "en 0 jours", "early_access_open_at": "May 20, 2026", "viewer_has_early_access": null, "special_tags": true, "hover_image_url": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "basic_info": {"name": "SaaS | Santé et beauté", "hover_image": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "padlocked": true}, "open_listing": false, "confidential_thumbnail_url": "https://static2.flippa.com/blurred_thumbnail_28946bf8-2e00-9851-1d72-eb00e8bac28c.png", "confidential_overlay_class": "confidential-blurred-image-overlay", "display_confidential_label": "", "annual_organic_traffic": 690, "revenue_average": 16671, "authority_score": 8, "app_rating": null, "managed_by_flippa": true, "managed_by": "flippa_broker", "broker_name": "Broker name redacted for this fixture", "broker_avatar_url": "https://static2.flippa.com/avatar_4170d75d-c8f8-412f-b6d2-e25ee5126cb7.png", "listing_category": "saas", "original_price": 807779, "indicative_price_lower_value": 0, "indicative_price_upper_value": 0, "price_dropped": true, "price_dropped_percent": 53, "under_offer": false, "badges": [{"text": "Géré par Flippa", "icon": "icons/library/logo/flippa-square.svg", "variant": "light_orange_oxford_text"}, {"text": "Broker", "icon": "icons/library/solid/user-circle.svg", "variant": "light_gray"}, {"text": "Sponsorisé", "icon": "icons/library/solid/star.svg", "variant": "light_yellow"}, {"text": "Choix de l'éditeur", "icon": "icons/library/solid/thumbs-up.svg", "variant": "light_purple"}], "listing_watchable": true, "show_multiple": true, "invest": false, "action_class": "primary", "key_data": [{"label": "Type", "value": "SaaS"}, {"label": "Industrie", "value": "Santé et beauté"}, {"label": "Monétisation", "value": "Services et abonnements"}, {"label": "Ancienneté", "value": "3 années"}, {"label": "Profit", "value": "11 501 € (EUR) par mois"}], "open_to_offer": false, "partial_sale": false, "equity_sale_percentage": "100", "hide_profit": false, "domain_only?": false, "action_button_text": "Voir l'Annonce", "original_price_text": "807 779 € (EUR)", "price_text": "380 546 € (EUR)", "target_raise_amount_text": "0 € (EUR)", "price_guide_text": "0 € (EUR) - 0 € (EUR)"}], "metadata": {"totalResults": 722}, "error?": false};
-</script></body></html>"""
+# A keyword that matches nothing: no cards, and "Show 0 results".
+NO_MATCH_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Online Businesses for Sale | Flippa</title><link rel="stylesheet" href="https://static.flippa.com/assets/application-0.css"><script src="https://static.flippa.com/assets/turbo-0.js"></script></head><body><span class="tw-text-gray-400 peer-checked:tw-text-primary-600 tw-text-xs" id="listing-category-count-saas">0</span><ul></ul><span id="filters-show-results-count">Show 0 results</span></body></html>"""
 
 SIGNUP_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Sign up | Flippa</title>
 <script src="https://static.flippa.com/assets/legacy-head-23638d7a.js"></script></head>
@@ -362,12 +902,12 @@ SIGNUP_FIXTURE_HTML = """<!DOCTYPE html><html><head><title>Sign up | Flippa</tit
         data-ts-input="cf-turnstile-response"></script>
 </body></html>"""
 
-# A page the site plainly served, with no listing data in it yet: the app
-# shell. Trimmed to the parts the classifier reads.
+# A page built out of the site's own assets with no cards and no result count
+# in it: served, but not (yet) a listing. Trimmed to what the classifier reads.
 SHELL_FIXTURE_HTML = ("<!DOCTYPE html><html><head><title>Flippa</title>" +
                       "".join(f'<link rel="preload" href="https://static.flippa.com/assets/a{i}.js">'
                               for i in range(20)) +
-                      '</head><body><div ng-controller="SearchV2_SearchController">'
+                      '</head><body><div id="search-scrollable-results">'
                       '</div></body></html>')
 
 # Chromium's own network-error page. It carries the SITE'S OWN HOSTNAME in its
@@ -391,53 +931,76 @@ def check_parser_values():
     print("\n[parser: real fixture, asserted values]")
     rows = parse_products(PAGE_FIXTURE_HTML, "https://flippa.com/search",
                           category="saas", page=1)
-    eq("two rows from the two-card fixture", len(rows), 2)
+    eq("five rows from the five-card fixture", len(rows), 5)
+    eq("rows come out in page order",
+       [r.sku for r in rows],
+       ["11816135", "14025709", "14178878", "13774133", "13829251"])
+    eq("the filter counter that shares the id prefix is not a card",
+       product_parser.count_cards(PAGE_FIXTURE_HTML), 5)
     by_sku = {r.sku: r for r in rows}
 
-    a = by_sku.get("12857417")
+    a = by_sku.get("11816135")
     check("the price-dropped card parsed", a is not None)
     if a:
-        eq("title is the card heading", a.title, "SaaS | Health and Beauty")
-        eq("url is the listing's own", a.url, "https://flippa.com/12857417")
-        eq("price is the reduced figure", a.price, 573006.0)
-        eq("original_price is the struck-through figure", a.original_price, 927250.0)
+        eq("title is the card heading", a.title, "SaaS | Internet")
+        eq("url is the listing's own link, slug and all", a.url,
+           "https://flippa.com/11816135-social-media-entertainment-business-"
+           "founded-in-2014-generating-2m-in-revenue-with-a-33-profit-margin-"
+           "operates-multiple-websites-in-the-online-dating-sector")
+        eq("price is the reduced figure", a.price, 2520000.0)
+        eq("original_price is the struck-through figure", a.original_price, 3500000.0)
         eq("currency is read, not defaulted", a.currency, "USD")
-        # 927250 -> 573006 is 38.2%; the site's own badge says "Reduced 38%".
-        # The COMPUTED figure is what goes in the column.
-        eq("discount is computed from the two prices", a.discount_pct, 38.2)
+        # 3,500,000 -> 2,520,000 is 28.0%; the site's own badge says
+        # "Reduced 28%". The COMPUTED figure is what goes in the column.
+        eq("discount is computed from the two prices", a.discount_pct, 28.0)
         eq("asset type", a.asset_type, "SaaS")
-        eq("industry", a.industry, "Health and Beauty")
-        eq("monetization", a.monetization, "Services & Subscriptions")
-        eq("monthly profit", a.monthly_profit, 13202.0)
-        eq("monthly revenue", a.monthly_revenue, 16671.0)
-        eq("profit multiple", a.profit_multiple, 3.6)
-        eq("revenue multiple", a.revenue_multiple, 2.9)
-        eq("age text as the site writes it", a.age_text, "3 years")
-        eq("country", a.country, "France")
-        eq("status", a.status, "open")
-        eq("sale method", a.sale_method, "classified")
-        eq("bid count on a classified listing", a.bid_count, 0)
-        eq("confidential badge", a.confidential, True)
-        eq("managed-by-Flippa badge", a.managed_by_flippa, True)
+        eq("industry", a.industry, "Internet")
+        # The card ABBREVIATES both monthly figures: "USD $51.7K", "USD $160K".
+        eq("monthly profit, scaled from the abbreviation", a.monthly_profit, 51700.0)
+        eq("monthly revenue, scaled from the abbreviation", a.monthly_revenue, 160000.0)
+        eq("profit multiple as printed (4.1x)", a.profit_multiple, 4.1)
+        eq("age text as the site writes it", a.age_text, "12 years")
+        eq("country", a.country, "Canada")
+        eq("brokered by Flippa", a.managed_by_flippa, True)
+        eq("broker named on the card (placeholder in this fixture)",
+           a.broker_name, "Broker Placeholder")
+        eq("no bid count on a fixed-price listing", a.bid_count, None)
         eq("category label from the run", a.category, "saas")
         eq("page column", a.page, 1)
         eq("position column", a.position, 1)
-        eq("price_source records both views agreed", a.price_source, "state+dom")
+        eq("price_source says the card was read", a.price_source, "dom")
         check("description is the seller's own line",
-              a.description and a.description.startswith("Profitable B2B SaaS"))
+              a.description and a.description.startswith(
+                  "Social media entertainment business founded in 2014"))
+        # Not on the card since the 2026-09-29 rebuild: null, never guessed.
+        for column in ("monetization", "revenue_multiple", "status",
+                       "sale_method", "sponsored", "editors_choice",
+                       "confidential", "verified_listing", "image_url"):
+            eq(f"{column} is null (not on the card)", getattr(a, column), None)
 
-    b = by_sku.get("12230608")
-    check("the auction card parsed", b is not None)
+    b = by_sku.get("14025709")
+    check("the partner-broker card parsed", b is not None)
     if b:
-        eq("auction price", b.price, 17289.0)
-        eq("auction bid count", b.bid_count, 1)
+        eq("a plain asking price", b.price, 7500.0)
         eq("no original price on a listing that did not drop", b.original_price, None)
         eq("no discount without an original price", b.discount_pct, None)
+        eq("a partner broker is not Flippa", b.managed_by_flippa, False)
         eq("position is 1-based within the page", b.position, 2)
 
+    c = by_sku.get("14178878")
+    check("the auction card parsed", c is not None)
+    if c:
+        eq("auction price is the figure, not the bid count", c.price, 4000.0)
+        eq("auction bid count ('21 bids · 4 days left')", c.bid_count, 21)
+        eq("an owner listing is not brokered by Flippa", c.managed_by_flippa, False)
+        eq("and names no broker", c.broker_name, None)
+    eq("a single bid ('1 bid')",
+       getattr(by_sku.get("13774133"), "bid_count", "missing"), 1)
+    eq("an auction with no bids yet has a starting price",
+       getattr(by_sku.get("13829251"), "price", "missing"), 9000.0)
+
     # page+position must be unique across a multi-page run: `position`
-    # restarts at 1 on every page, so the column is worthless without the pair
-    # (measured elsewhere in this family: 60 of 119 rows once claimed a position another row had).
+    # restarts at 1 on every page, so the column is worthless without the pair.
     page2 = parse_products(PAGE_FIXTURE_HTML, "https://flippa.com/search", page=2)
     pairs = [(r.page, r.position) for r in rows + page2]
     eq("page+position is unique across pages", len(set(pairs)), len(pairs))
@@ -445,26 +1008,32 @@ def check_parser_values():
 
 def check_second_locale():
     print("\n[a second locale]")
-    # The rule this family settled on: run a SECOND locale before believing the first. Flippa's
-    # own hreflang set publishes /fr/ and /es/ paths, and that single step
-    # found two things the English pages could never show.
+    # Flippa's own hreflang set publishes /fr/ and /es/ paths. The French
+    # page CONVERTS the prices and translates the labels — the same listing
+    # as PAGE_FIXTURE_HTML's first card, captured the same day.
     rows = parse_products(FR_FIXTURE_HTML, "https://flippa.com/fr/search",
                           category=category_from_url("https://flippa.com/fr/search"),
                           page=1)
-    eq("the French page parses", len(rows), 1)
+    if not eq("the French page parses", len(rows), 2):
+        return
     row = rows[0]
-    eq("the same listing, same id", row.sku, "12857417")
-    # 1. Prices are CONVERTED, not just relabelled. The currency column has to
-    #    follow, and a defaulted "USD" would have been silently wrong.
+    eq("the same listing, same id", row.sku, "11816135")
+    eq("the link carries the locale", row.url.startswith(
+        "https://flippa.com/fr/11816135-"), True)
+    # "2 262 363 € (EUR)": the ISO code comes AFTER the amount, in brackets,
+    # and the thousands are space-grouped.
     eq("the price is in euros on the French page", row.currency, "EUR")
-    eq("and is the converted amount", row.price, 380546.0)
-    # 2. The key-data LABELS are localised, so anything keyed on the English
-    #    word "Net Profit" comes back null. The profit is read by the SHAPE of
-    #    the value instead.
-    eq("net profit survives localised labels", row.monthly_profit, 11501.0)
-    eq("age comes from the record's own formatted field", row.age_text, "3 années")
-    eq("industry is the site's own localised value", row.industry, "Santé et beauté")
-    # 3. The locale segment is not a category.
+    eq("and is the converted amount", row.price, 2262363.0)
+    eq("the struck-through original too", row.original_price, 3142171.0)
+    # "46,4K € (EUR)": a decimal COMMA before the abbreviation.
+    eq("monthly profit with a decimal comma and a K", row.monthly_profit, 46400.0)
+    eq("monthly revenue", row.monthly_revenue, 144000.0)
+    eq("profit multiple under a French label", row.profit_multiple, 4.1)
+    eq("age under a French label", row.age_text, "12 années")
+    eq("industry under a French label ('Secteur')", row.industry, "Internet")
+    eq("'Négocié par Flippa' is brokered by Flippa", row.managed_by_flippa, True)
+    eq("open to offers in French has no price either", rows[1].price, None)
+    # The locale segment is not a category.
     eq("a locale prefix is not read as a category",
        category_from_url("https://flippa.com/fr/search"), None)
     eq("but a filter in the same URL still is",
@@ -476,7 +1045,9 @@ def check_second_locale():
        product_parser.locale_from_url("https://flippa.com/search"), None)
     eq("pagination works the same on a localised path",
        page_url("https://flippa.com/fr/search", 2),
-       "https://flippa.com/fr/search?page%5Bnumber%5D=2")
+       "https://flippa.com/fr/search?page=2")
+    eq("the French result count is read through its grouping space",
+       product_parser.results_count(FR_FIXTURE_HTML), 6073)
 
 
 def check_known_limitations_are_pinned():
@@ -485,63 +1056,65 @@ def check_known_limitations_are_pinned():
     # asserted with the reason, so a future change is a decision rather than a
     # surprise.
     #
-    # Flippa's own multiple is NOT always price / (12 x monthly profit):
-    # measured 2026-09-19, 53 of 63 listings agreed within 0.15 and 10 did
-    # not. It is computed over a profit window this repo cannot see, so it is
-    # reported AS PUBLISHED rather than recomputed or "corrected".
-    record = {"id": "1", "listing_url": "https://flippa.com/1", "price": 9082,
-              "currency_label": "USD $", "multiple": 2.6, "revenue_multiple": 1.8,
-              "show_multiple": True, "profit_average": "386",
-              "basic_info": {"name": "SaaS | Internet"},
-              "key_data": [{"label": "Net Profit", "value": "USD $386 p/mo"}]}
-    html = ('<html><body><script>const STATE = '
-            + json.dumps({"results": [record], "metadata": {"totalResults": 1}})
-            + ';</script></body></html>')
-    row = parse_products(html, "https://flippa.com/search")[0]
-    eq("the site's own multiple is reported as published", row.profit_multiple, 2.6)
-    check("even though price / (12 x profit) is 1.96 here — the two disagree "
-          "on ~1 listing in 6, and inventing our own figure would be worse",
-          abs(row.price / (12 * row.monthly_profit) - 2.0) < 0.1)
-
-    # The rendered-card fallback cannot read a localised label set. It runs
-    # only when the embedded JSON is absent, which has not been observed;
-    # pinning it here keeps the gap visible instead of half-guarded.
-    fr_card_labels = {"industrie", "monétisation", "ancienneté"}
-    english_only = {"industry", "monetization"}
-    check("the card fallback keys industry/monetization on English labels "
-          "(the JSON path is locale-proof; the card path is not)",
-          english_only.isdisjoint(fr_card_labels))
+    # 1. The card abbreviates the monthly figures, so they carry three
+    #    significant figures. Nothing on the search page states them exactly.
+    rows = parse_products(PAGE_FIXTURE_HTML, "https://flippa.com/search")
+    if not check("the fixture parses (needed for the pins below)", rows):
+        return
+    a = rows[0]
+    eq("monthly profit is the site's rounded figure, not an exact one",
+       a.monthly_profit, 51700.0)
+    # 2. The multiple is reported AS PUBLISHED, never recomputed:
+    #    2,520,000 / (12 x 51,700) is 4.06, which the site prints as 4.1x.
+    eq("the site's own multiple is reported as published", a.profit_multiple, 4.1)
+    check("even though it is not exactly price / (12 x profit)",
+          abs(a.price / (12 * a.monthly_profit) - a.profit_multiple) > 0.01)
+    # 3. Key-data labels are read from a table of the three languages the site
+    #    publishes. A fourth language would leave those columns null rather
+    #    than guess; the fixture-backed check above proves the French table.
+    check("the label table covers en, fr and es for every column it fills",
+          all(sum(1 for c in product_parser._KEY_DATA_LABELS.values() if c == col) >= 2
+              for col in set(product_parser._KEY_DATA_LABELS.values())))
 
 
 def check_parser_fallback_path():
-    print("\n[parser: the rendered-card fallback]")
-    # The same bytes with the embedded JSON disabled: the DOM path has to
-    # stand on its own, and it has to AGREE with the JSON path. On the full
-    # 25-card capture these two paths agree on all 22 shared columns.
-    stripped = PAGE_FIXTURE_HTML.replace("const STATE =", "const NOT_STATE =")
-    dom_rows = {r.sku: r for r in parse_products(stripped, "https://flippa.com/search",
-                                                 category="saas", page=1)}
-    state_rows = {r.sku: r for r in parse_products(PAGE_FIXTURE_HTML,
-                                                   "https://flippa.com/search",
-                                                   category="saas", page=1)}
-    eq("the fallback finds the same listings", sorted(dom_rows), sorted(state_rows))
-    shared = ("title", "price", "currency", "original_price", "discount_pct",
-              "description", "asset_type", "industry", "monetization",
-              "monthly_profit", "profit_multiple", "revenue_multiple",
-              "age_text", "country", "bid_count", "managed_by_flippa",
-              "sponsored", "editors_choice", "confidential", "verified_listing",
-              "url", "position")
-    disagreements = [
-        (sku, field, getattr(state_rows[sku], field), getattr(dom_rows[sku], field))
-        for sku in state_rows for field in shared
-        if getattr(state_rows[sku], field) != getattr(dom_rows[sku], field)]
-    check(f"both paths agree on every shared column ({len(shared)} columns x "
-          f"{len(state_rows)} rows)", not disagreements)
-    if disagreements:
-        for d in disagreements[:5]:
-            print(f"        {d}")
-    eq("the fallback labels its own provenance",
-       {r.price_source for r in dom_rows.values()}, {"dom"})
+    print("\n[parser: card variants]")
+    rows = {r.sku: r for r in parse_products(VARIANTS_FIXTURE_HTML,
+                                             "https://flippa.com/search", page=1)}
+    eq("both variant cards parse", sorted(rows), ["12282016", "14273497"])
+    offers = rows.get("12282016")
+    if offers:
+        # "Price Guide: USD $75,000 - USD $100,000" is a RANGE. The site
+        # prints no asking price, and neither does the row.
+        eq("open to offers: no price", offers.price, None)
+        eq("open to offers: no currency invented", offers.currency, None)
+        eq("open to offers: no discount", offers.discount_pct, None)
+        eq("a partner broker's card names the broker",
+           offers.broker_name, "Broker Placeholder")
+        eq("and is not brokered by Flippa", offers.managed_by_flippa, False)
+    first = rows.get("14273497")
+    if first:
+        # The price sits in a <p>, not the <span> of a reduced card, and a
+        # countdown strip follows the price column.
+        eq("first-access listing: the asking price", first.price, 200000.0)
+        eq("first-access listing: currency", first.currency, "USD")
+        eq("a sub-1-year age as written", first.age_text, "<1 year")
+        eq("a state-qualified country", first.country, "FL, United States")
+
+    last = {r.sku: r for r in parse_products(LAST_PAGE_FIXTURE_HTML,
+                                             "https://flippa.com/search", page=14)}
+    partial = last.get("12274326")
+    if partial:
+        # "Partial Sale: 25% Equity" carries a percentage and no money.
+        eq("a partial-equity sale has no asking price", partial.price, None)
+        eq("a loss keeps its sign ('-USD $9')", partial.monthly_profit, -9.0)
+        eq("'N/A' revenue is null, not zero", partial.monthly_revenue, None)
+        eq("no multiple printed, none reported", partial.profit_multiple, None)
+    auction = last.get("14319943")
+    if auction:
+        eq("an auction with no bids yet: the starting price", auction.price, 500.0)
+        eq("and no bid count is invented from 'Starting Price'",
+           auction.bid_count, None)
 
 
 def check_price_parsing():
@@ -573,25 +1146,29 @@ def check_price_parsing():
 
 def check_pagination_convention():
     print("\n[pagination]")
-    # From Flippa's own legacy-foot JS: page 1 carries no page parameter, and
-    # a bare `page` is deleted rather than honoured.
+    # The site's own next link is ?page=2&pagination=true; page 1 carries no
+    # page parameter. ?page=N alone returns the same listings (measured
+    # 2026-10-14), so that is what is built.
     eq("page 1 carries no page parameter",
        page_url("https://flippa.com/search", 1), "https://flippa.com/search")
     eq("page 2 uses the site's own parameter",
        page_url("https://flippa.com/search", 2),
-       "https://flippa.com/search?page%5Bnumber%5D=2")
+       "https://flippa.com/search?page=2")
     eq("existing filters are preserved",
-       page_url("https://flippa.com/search?filter%5Bsitetype%5D=saas", 3),
-       "https://flippa.com/search?filter%5Bsitetype%5D=saas&page%5Bnumber%5D=3")
-    eq("a stale bare ?page= is replaced, not appended to",
+       page_url("https://flippa.com/search?filter%5Bproperty_type%5D=saas", 3),
+       "https://flippa.com/search?filter%5Bproperty_type%5D=saas&page=3")
+    eq("a stale ?page= is replaced, not appended to",
        page_url("https://flippa.com/search?page=7", 2),
-       "https://flippa.com/search?page%5Bnumber%5D=2")
-    eq("a stale page[number] is replaced",
+       "https://flippa.com/search?page=2")
+    eq("the pre-rebuild page[number] spelling is replaced too, never doubled",
        page_url("https://flippa.com/search?page%5Bnumber%5D=9", 4),
-       "https://flippa.com/search?page%5Bnumber%5D=4")
+       "https://flippa.com/search?page=4")
+    eq("the site's own next link is re-addressed, keeping its other parameter",
+       page_url("https://flippa.com/search?page=2&pagination=true", 5),
+       "https://flippa.com/search?pagination=true&page=5")
     eq("category shortcuts paginate the same way",
        page_url("https://flippa.com/websites", 2),
-       "https://flippa.com/websites?page%5Bnumber%5D=2")
+       "https://flippa.com/websites?page=2")
     eq("category label from a filter", category_from_url(
         "https://flippa.com/search?filter%5Bproperty_type%5D=saas"), "saas")
     eq("category label from a shortcut path",
@@ -606,30 +1183,31 @@ def check_pagination_convention():
 def check_page_states():
     print("\n[page_flow]")
     content = page_flow.classify(PAGE_FIXTURE_HTML)
-    eq("a page with records is content", content.state, page_flow.CONTENT)
+    eq("a page with listing cards is content", content.state, page_flow.CONTENT)
+    eq("and records the site's own count", content.total_results, 671)
     check("content is not retried", not content.policy.retry)
 
-    empty_state = json.dumps({"results": [{"id": "1"}, {"id": "2"}],
-                              "metadata": {"totalResults": 0}})
-    empty = page_flow.classify("<html><body><script>const STATE = "
-                               + empty_state + ";</script></body></html>")
-    eq("totalResults 0 is an empty listing", empty.state, page_flow.EMPTY)
+    empty = page_flow.classify(NO_MATCH_FIXTURE_HTML)
+    eq("'Show 0 results' is an empty listing", empty.state, page_flow.EMPTY)
     check("an empty listing is a complete answer", empty.policy.complete)
     check("an empty listing is not blocked", not empty.policy.blocked)
-    # Flippa answers a zero-match query with five PROMOTED listings. They are
-    # placements, not matches — reporting them would be fabricated rows.
-    eq("promoted listings on a zero-match page are not reported",
-       parse_products("<html><body><script>const STATE = " + empty_state
-                      + ";</script></body></html>", "https://flippa.com/search"), [])
+    # The site's own zero outranks any card: a card on a zero-match page
+    # could only be a placement, and reporting it would be a fabricated row.
+    with_card = NO_MATCH_FIXTURE_HTML.replace(
+        "<ul></ul>", '<ul><li id="listing-12345678"></li></ul>')
+    eq("a card on a zero-match page does not make it content",
+       page_flow.classify(with_card).state, page_flow.EMPTY)
+    eq("and is not reported", parse_products(with_card, "https://flippa.com/search"), [])
 
-    past_end = page_flow.classify(
-        '<html><body><script>const STATE = {"results": [], "metadata": '
-        '{"totalResults": 6183}};</script></body></html>')
-    eq("an empty page past the end is exhausted", past_end.state, page_flow.EXHAUSTED)
+    past_end = page_flow.classify(PAST_END_FIXTURE_HTML)
+    eq("a page past the end (no cards, 676 results) is exhausted",
+       past_end.state, page_flow.EXHAUSTED)
     check("being past the end is a complete answer", past_end.policy.complete)
+    eq("past-the-end keeps the site's count", past_end.total_results, 676)
 
     shell = page_flow.classify(SHELL_FIXTURE_HTML)
-    eq("the app shell is unpainted, not blocked", shell.state, page_flow.UNPAINTED)
+    eq("a served page with no cards and no count is unpainted, not blocked",
+       shell.state, page_flow.UNPAINTED)
     check("an unpainted page waits before retrying", shell.policy.wait_first)
     check("an unpainted page is not worth a solve", not shell.policy.may_solve)
 
@@ -642,37 +1220,28 @@ def check_page_states():
     eq("a refusal status is blocked",
        page_flow.classify("<html>x</html>", status_code=403).state, page_flow.BLOCKED)
 
-    # The rule that cost two releases on another site: count a marker on a
-    # page you KNOW is good before adding it. Cloudflare's JS-detections tag
-    # is on every page Flippa serves.
-    good = open(os.path.join(REPO, "captures",
-                             "live_search_page1_2026-09-19.html"),
-                encoding="utf-8", errors="replace").read() \
-        if os.path.exists(os.path.join(REPO, "captures",
-                                       "live_search_page1_2026-09-19.html")) else None
+    # Count a marker on a page you KNOW is good before adding it. Cloudflare's
+    # JS-detections tag is on every page Flippa serves. Run against a local,
+    # uncommitted full capture when one is present (see CONTRIBUTING.md).
+    capture = os.path.join(REPO, "captures", "live_search_page1_2026-10-14.html")
+    good = (open(capture, encoding="utf-8", errors="replace").read()
+            if os.path.exists(capture) else None)
     if good:
         eq("a real served page is content, though it references "
            "cdn-cgi/challenge-platform", page_flow.classify(good).state,
            page_flow.CONTENT)
-    else:
-        skip("a real served page is content",
-             "captures/live_search_page1_2026-09-19.html is not in this "
-             "checkout — see CONTRIBUTING.md on recording one")
-    if good:
-        # The rule itself, applied to the real marker set: NOT ONE of the
-        # strings this repo calls a challenge may appear on a page the site
-        # plainly served. Checked against the bytes rather than by reading the
-        # list, because that is the mistake the list is trying to avoid.
         firing = [m for markers in product_parser.BOT_CHALLENGE_MARKERS.values()
                   for m in markers if m in good]
-        check("no challenge marker appears on a good 964 KB listing page"
+        check("no challenge marker appears on a good full listing page"
               + (f" — {firing} does" if firing else ""), not firing)
-        # And the strings that WOULD have fired, to keep the measurement in
-        # the suite rather than only in a comment.
         for tempting in ("cdn-cgi", "challenge-platform", "cloudflare"):
             check(f"(measured: {tempting!r} appears {good.count(tempting)}x on "
                   f"that good page, which is why it is not a marker)",
                   good.count(tempting) > 0)
+    else:
+        skip("a real served page is content",
+             "captures/live_search_page1_2026-10-14.html is not in this "
+             "checkout — see CONTRIBUTING.md on recording one")
 
 
 # ---------------------------------------------------------------------------
@@ -682,9 +1251,10 @@ def check_shortfall_arithmetic():
     print("\n[page coverage]")
     # The site publishes its own match count, so "did this page bring back
     # everything it should have?" is arithmetic rather than a threshold.
-    eq("a full first page is 25", page_flow.expected_records(724, 1), 25)
-    eq("the last page holds the remainder", page_flow.expected_records(60, 3), 10)
-    eq("a page past the end expects nothing", page_flow.expected_records(60, 9), 0)
+    eq("a full first page is 50", page_flow.expected_records(724, 1), 50)
+    # Measured 2026-10-14: page 14 of a 676-match filter held 26 cards.
+    eq("the last page holds the remainder", page_flow.expected_records(676, 14), 26)
+    eq("a page past the end expects nothing", page_flow.expected_records(676, 15), 0)
     eq("no total means no expectation", page_flow.expected_records(None, 1), None)
     # 10000 is the site's CAP, printed as "10,000+" — a cap is not a count,
     # and treating it as one would report a phantom shortfall on every large
@@ -692,10 +1262,10 @@ def check_shortfall_arithmetic():
     eq("the 10,000 cap is not treated as a count",
        page_flow.expected_records(10000, 2), None)
     check("a full page reports no shortfall",
-          page_flow.shortfall(724, 1, 25) is None)
-    message = page_flow.shortfall(724, 1, 18)
+          page_flow.shortfall(724, 1, 50) is None)
+    message = page_flow.shortfall(724, 1, 38)
     check("a short page is named, with both numbers in the message",
-          message and "18" in message and "25" in message)
+          message and "38" in message and "50" in message)
 
 
 def check_fingerprint_kwargs_are_ones_playwright_accepts():
@@ -1714,7 +2284,7 @@ def check_credentialled_paths_run():
                 rc = sac.scrape(Args())
             eq("the browserless engine parses a real response and exits 0", rc, 0)
             rows = json.load(open(f"{os.path.join(tmp, 'api_run')}.json", encoding="utf-8"))
-            eq("with the same rows the browser engines produce", len(rows), 2)
+            eq("with the same rows the browser engines produce", len(rows), 5)
     finally:
         requests.post, requests.get, cs.time.sleep = real_post, real_get, real_sleep
 
@@ -1946,7 +2516,7 @@ def check_run_integrity():
 
         eq("a page full of listings that would not parse is a schema failure",
            output_writer.failure_stop_reason(
-               _Outcome(page_flow.PageState(page_flow.CONTENT, "25 records"))),
+               _Outcome(page_flow.PageState(page_flow.CONTENT, "50 cards"))),
            "content_unparsed")
         eq("a page that never painted is named as that instead",
            output_writer.failure_stop_reason(
