@@ -106,7 +106,8 @@ silently regress:
 - **A run that finds nothing writes nothing.** It must not replace a good output
   file with `[]`. `--allow-empty` is the opt-out.
 - **Exit codes are a contract**, not decoration: `0` ok, `1` crash, `2` bad
-  usage, `3` blocked by a challenge, `4` zero listings, `5` remote API error,
+  usage, `3` blocked by a challenge, `4` zero listings from a listing shown
+  to be empty, `5` zero listings because the content was never obtained,
   `6` partial run. A pipeline branches on these, and all four engines produce
   the same code for the same situation because they share `finish_run`.
 - **A sku already written by an earlier page of the same run is dropped, not

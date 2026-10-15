@@ -27,14 +27,18 @@ API surface used (per https://2captcha.com/scraper/scraper-api/api)
     Content-Type: application/json
     {"task_type": "scrape", "url": ..., "data_format": "raw",
      "format": "json", "timeout": 1..120,
-     "waitFor": "<JSON *string*, not an object>",
+     "waitFor": {"state": "load"},           # an OBJECT
      "cdpurl": "ws://user:pass@host:port"   # optional
     }
-  -> 200 {"status": 200, "headers": {...}, "body": "<!DOCTYPE html>..."}
+  -> 200 {"status": "...", "http_code": 200, "headers": {...},
+          "body": "<!DOCTYPE html>..."}
 
-`waitFor` must be a JSON *string* (double-encoded), and the parameter is
-spelled `cdpurl` (all lowercase) while `waitFor` is camelCase — the API's own
-inconsistency, not a typo here.
+`waitFor` is sent as an OBJECT. The JSON-string form this file used to send
+is now answered with HTTP 422 — and the task is still billed. `waitFor.state`
+takes only `load` or `domcontentloaded`. The target page's status is
+`http_code`; `status` is the API's own verdict string and is not a number.
+The parameter is spelled `cdpurl` (all lowercase) while `waitFor` is
+camelCase — the API's own inconsistency, not a typo here.
 
 Usage
 -----
@@ -60,7 +64,7 @@ import requests
 import cli_types
 import env_config
 import page_flow
-from output_writer import finish_run, merge_pages
+from output_writer import EXIT_API_ERROR, finish_run, merge_pages
 from product_parser import (category_from_url, locale_from_url, page_url,
                             parse_products)
 from proxy_pool import redact_secret_patterns
@@ -74,24 +78,26 @@ SYNC_ENDPOINT = f"{API_BASE}/tasks/sync"
 # The API caps `timeout` at 120s.
 MAX_API_TIMEOUT = 120
 
-# Kept distinct from 2 (bad usage) on purpose: a remote API failing is not the
-# operator passing wrong arguments, and a harness that lumps them together
-# sends you looking in the wrong place.
-EXIT_API_ERROR = 5
+# EXIT_API_ERROR (5) comes from output_writer, where every engine's zero-row
+# run that never obtained its content maps to it. Kept distinct from 2 (bad
+# usage): a remote API failing is not the operator passing wrong arguments.
 
 
-def _build_wait_for(args) -> Optional[str]:
-    """`waitFor` as the JSON STRING the API wants, or None.
+def _build_wait_for(args) -> Optional[dict]:
+    """`waitFor` as the OBJECT the API takes, or None.
 
     Not needed on flippa.com (see the module docstring); kept because a
     future page kind, or a run routed through `--cdp-url`, may want it.
     """
     if args.wait_text:
-        return json.dumps({"text": args.wait_text})
+        return {"text": args.wait_text}
     if args.wait_element:
-        return json.dumps({"element": args.wait_element, "checkVisible": True})
+        return {"element": args.wait_element, "checkVisible": True}
     if args.wait_state:
-        return json.dumps({"state": args.wait_state})
+        if args.wait_state not in ("load", "domcontentloaded"):
+            raise ValueError(f"waitFor.state must be load or domcontentloaded, "
+                             f"not {args.wait_state!r}")
+        return {"state": args.wait_state}
     return None
 
 
@@ -128,7 +134,9 @@ def fetch_html(args, url: str) -> Tuple[str, Optional[int]]:
     # x-debug header — the only place the real cost of the call shows up.
     debug = resp.headers.get("x-debug")
     if debug:
-        logger.info("x-debug: %s", debug)
+        # Redacted: SECURITY.md lists this header as a place a credential can
+        # reach a log, and it is echoed verbatim from the vendor.
+        logger.info("x-debug: %s", redact_secret_patterns(debug))
 
     if resp.status_code != 200:
         # 422 = the task ran and errored (an unreachable cdpurl does this);
@@ -139,7 +147,9 @@ def fetch_html(args, url: str) -> Tuple[str, Optional[int]]:
 
     body = resp.json()
     html = body.get("body") or ""
-    upstream = body.get("status")
+    # The target's status is `http_code`. `status` is the API's own verdict
+    # string ("ok", "warn"), never the page's status.
+    upstream = body.get("http_code")
     logger.info("Upstream page status %s, %d bytes of HTML.", upstream, len(html))
     return html, upstream if isinstance(upstream, int) else None
 

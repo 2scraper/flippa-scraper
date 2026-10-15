@@ -122,6 +122,30 @@ STATE_POLICY = {
 }
 
 
+# How many captcha solves ONE page may buy, across every attempt, retry and
+# exit rotation spent on it. Checked BEFORE a purchase, never reset by a retry
+# or a rotation: a fresh exit is a reason to fetch again, not a fresh
+# allowance. Before this existed, a page behind a challenge bought one solve
+# per exit — 3 with a three-exit pool.
+SOLVES_PER_PAGE = 1
+
+
+class SolveBudget:
+    """The per-page solve allowance. One instance per page, shared by every
+    call site that might pay, in every engine."""
+
+    def __init__(self, limit: int = SOLVES_PER_PAGE):
+        self.limit = limit
+        self.spent = 0
+
+    def spend(self) -> bool:
+        """Claim one solve; False (and nothing claimed) once the limit is reached."""
+        if self.spent >= self.limit:
+            return False
+        self.spent += 1
+        return True
+
+
 @dataclass
 class PageState:
     """The classification of one response, with the evidence behind it."""

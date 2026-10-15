@@ -113,6 +113,14 @@ def dedupe_by_sku(products: List[Product], seen: Set[str]) -> List[Product]:
     return fresh
 
 
+def _current_umask() -> int:
+    """The process umask. os.umask can only be read by setting it, so it is
+    set and immediately restored."""
+    mask = os.umask(0o022)
+    os.umask(mask)
+    return mask
+
+
 def _atomic_write(path: str, write: Callable) -> None:
     """Write `path` through a temporary file in the same directory, then rename.
 
@@ -121,9 +129,20 @@ def _atomic_write(path: str, write: Callable) -> None:
     consumer can tell a truncated JSON from a short run. os.replace is atomic
     within a filesystem, so a reader sees either the previous complete file or
     the new complete one and never a mixture of the two.
+
+    The file's MODE is the one a plain open() would have given it: mkstemp
+    creates its temporary at 0600, and os.replace keeps that, so without the
+    chmod every output and sidecar came out readable by its owner only. A new
+    file gets 0o666 minus the umask; an existing file keeps the mode it had,
+    so a file someone made group-readable stays that way. Never a flat 0644,
+    which would narrow 0664 under umask 002.
     """
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
+    try:
+        mode = os.stat(path).st_mode & 0o7777
+    except FileNotFoundError:
+        mode = 0o666 & ~_current_umask()
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-",
                                suffix=f"-{os.path.basename(path)}")
     try:
@@ -132,6 +151,7 @@ def _atomic_write(path: str, write: Callable) -> None:
             write(f)
             f.flush()
             os.fsync(f.fileno())
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -142,9 +162,9 @@ def _atomic_write(path: str, write: Callable) -> None:
 
 
 # A leading one of these makes a spreadsheet treat the cell as a formula
-# rather than as text. \t and \r are here because Excel strips them and then
-# reads what follows.
-_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+# rather than as text. \t, \r and \n are here because spreadsheet apps strip
+# leading whitespace of that kind and then read what follows.
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r", "\n")
 
 
 def csv_safe(value):
@@ -214,28 +234,51 @@ def write_json(products: List[Product], path: str) -> None:
         [asdict(p) for p in products], f, ensure_ascii=False, indent=2))
 
 
-def write_csv(products: List[Product], path: str) -> None:
+def write_csv(products: List[Product], path: str) -> int:
+    """Write the CSV; return how many cells csv_safe() had to escape.
+
+    The count goes into the run's sidecar as `csv_cells_escaped`, so that the
+    CSV and the JSON (which carries the site's bytes unchanged) differing is
+    declared rather than discovered.
+    """
     # An empty result still gets the header row. A zero-byte file makes a
     # consumer fail on read (no columns to parse) instead of reading a valid
     # table with zero rows.
     if not products:
         _atomic_write(path, lambda f: csv.DictWriter(
             f, fieldnames=list(asdict(Product()).keys())).writeheader())
-        return
+        return 0
     fieldnames = list(asdict(products[0]).keys())
+    escaped = 0
 
     def _write(f):
+        nonlocal escaped
+        escaped = 0
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for p in products:
-            writer.writerow({k: csv_safe(v) for k, v in asdict(p).items()})
+            row = {}
+            for k, v in asdict(p).items():
+                safe = csv_safe(v)
+                if safe is not v:
+                    escaped += 1
+                row[k] = safe
+            writer.writerow(row)
 
     _atomic_write(path, _write)
+    return escaped
 
 
 # Exit code used when a run completes but produced nothing. Distinct from 1
 # (crash) so a caller can tell "ran, found nothing" from "blew up".
 EXIT_NO_PRODUCTS = 4
+
+# Exit code for a run that holds nothing because the CONTENT WAS NEVER
+# OBTAINED: a remote API error, a navigation timeout, a dead proxy, or a page
+# full of listings this parser could not read. Distinct from 4, which claims
+# the listing itself is empty — a claim nothing in such a run supports.
+EXIT_CONTENT_NOT_OBTAINED = 5
+EXIT_API_ERROR = EXIT_CONTENT_NOT_OBTAINED
 
 # Exit code for a run blocked by a bot-check/challenge page before parsing
 # even started — distinct from EXIT_NO_PRODUCTS so a caller can tell "the
@@ -382,7 +425,7 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
 
 
 def save(products: List[Product], out_prefix: str, fmt: str,
-         allow_empty: bool = False) -> int:
+         allow_empty: bool = False, stats: Optional[dict] = None) -> int:
     """Write JSON/CSV and return a process exit code.
 
     On zero products, nothing is written at all unless `allow_empty`. A
@@ -405,7 +448,9 @@ def save(products: List[Product], out_prefix: str, fmt: str,
         write_json(products, f"{out_prefix}.json")
         print(f"[+] Saved {len(products)} listings -> {out_prefix}.json")
     if fmt in ("csv", "both"):
-        write_csv(products, f"{out_prefix}.csv")
+        escaped = write_csv(products, f"{out_prefix}.csv")
+        if stats is not None:
+            stats["csv_cells_escaped"] = escaped
         print(f"[+] Saved {len(products)} listings -> {out_prefix}.csv")
     return 0 if products else EXIT_NO_PRODUCTS
 
@@ -426,6 +471,14 @@ COMPLETE_STOP_REASONS = ("completed", "listing_exhausted", "no_new_listings",
 # the run get what it went for", which is NOT the same question as "does this
 # file hold the whole listing".
 EXHAUSTIVE_STOP_REASONS = ("listing_exhausted", "no_new_listings", "no_results")
+
+# Stop reasons under which a run that holds NO rows may honestly say "the
+# listing is empty" (exit 4). Every other reason, including one added later
+# and not listed anywhere, means the content was never obtained (exit 5): an
+# allowlist of the reasons that prove emptiness, rather than a list of the
+# failures, so a new failure cannot fall through to "empty".
+EMPTY_STOP_REASONS = ("no_results", "listing_exhausted", "no_new_listings",
+                      "completed")
 
 
 def finish_run(products: List[Product], out_prefix: str, fmt: str,
@@ -481,7 +534,8 @@ def finish_run(products: List[Product], out_prefix: str, fmt: str,
               f"{total_results_last} while this run was collecting: the catalogue "
               f"was edited underneath it, so a listing may have been stepped over "
               f"between two pages. Recorded as catalog_mutated in the metadata.")
-    rc = save(products, out_prefix, fmt, allow_empty=allow_empty)
+    save_stats: dict = {}
+    rc = save(products, out_prefix, fmt, allow_empty=allow_empty, stats=save_stats)
     wrote_output = bool(products) or allow_empty
 
     if wrote_output:
@@ -491,7 +545,7 @@ def finish_run(products: List[Product], out_prefix: str, fmt: str,
             # An explicitly empty result that the site itself reported as
             # empty is a complete answer, not a failure.
             status = "complete"
-        write_run_meta(out_prefix, run_meta(
+        meta = run_meta(
             status=status, stop_reason=stop_reason,
             pages_requested=pages_requested, pages_completed=pages_completed,
             pages_failed=pages_failed, total_results=total_results,
@@ -504,12 +558,24 @@ def finish_run(products: List[Product], out_prefix: str, fmt: str,
             total_results_first=total_results_first,
             total_results_last=total_results_last,
             catalog_mutated=catalog_mutated,
-            start_url=start_url, final_url=final_url, products=len(products)))
+            start_url=start_url, final_url=final_url, products=len(products))
+        # Housekeeping goes UNDER the run's own fields: a name collision must
+        # never let a write statistic overwrite something the run reported.
+        write_run_meta(out_prefix, {
+            "csv_cells_escaped": save_stats.get("csv_cells_escaped"), **meta})
 
     if not products:
-        # Nothing gathered at all: a challenge outranks "empty listing",
-        # because it says something stood between the run and the content.
-        return EXIT_BLOCKED if blocked else rc
+        # Nothing gathered at all: a challenge outranks everything, because
+        # it says something stood between the run and the content. After
+        # that, only a reason that PROVES the listing empty may say so.
+        if blocked:
+            return EXIT_BLOCKED
+        if stop_reason in EMPTY_STOP_REASONS:
+            return rc
+        print(f"[!] 0 listings, and the run never obtained the content "
+              f"({stop_reason}) — exit {EXIT_CONTENT_NOT_OBTAINED}, not "
+              f"{EXIT_NO_PRODUCTS}: nothing here says the listing is empty.")
+        return EXIT_CONTENT_NOT_OBTAINED
     if not complete:
         print(f"[!] Partial run: stopped after {pages_completed} of "
               f"{pages_requested} page(s) ({stop_reason}). The output holds "

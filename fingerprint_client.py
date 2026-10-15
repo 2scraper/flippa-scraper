@@ -237,8 +237,8 @@ def playwright_context_kwargs(fp: dict) -> dict:
     if found["locale"]["value"]:
         kwargs["locale"] = str(found["locale"]["value"])
     else:
-        # Deliberately NOT en-{country}: that is the exact bug §16 names, and
-        # it produced "en-DE" for a German fingerprint.
+        # Deliberately NOT en-{country}: an earlier version did exactly that,
+        # and it produced "en-DE" for a German fingerprint.
         logger.warning("This fingerprint carries no locale — leaving the "
                        "browser's own rather than inventing one from the "
                        "country.")

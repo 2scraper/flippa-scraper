@@ -200,8 +200,8 @@ same situation.
 | 1 | crash |
 | 2 | bad usage, including an exit that fails its preflight — one small request through the proxy before any browser starts, so a rotated password costs a second rather than three minutes of timeouts |
 | 3 | blocked before parsing — a challenge, a refusal status, or a page not built out of Flippa's own assets |
-| 4 | ran fine, zero listings (including "the site says this query matches nothing") |
-| 5 | the remote API failed (`scraper_api_client.py`) |
+| 4 | zero listings, and the run can show the listing is empty: the site says the query matches nothing, or the listing ran out |
+| 5 | zero listings because the content was never obtained: a remote API error, a navigation timeout, a dead proxy, a page that never painted, or a page of listings the parser could not read |
 | 6 | partial: some pages were gathered, then the run stopped early |
 
 Every run that writes output also writes `<out>.meta.json`. Two fields there
