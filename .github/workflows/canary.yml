@@ -2,7 +2,7 @@ name: canary
 
 # tests.yml deliberately never touches flippa.com, which leaves a real gap: a
 # change to the site itself only shows up when a user hits it, while the
-# offline badge stays green. This is the other half — one real run a day
+# offline badge stays green. This is the other half — one real run a week (Mondays)
 # against a known-good filtered URL.
 #
 # --pages 3, not 1: with one page pagination is never exercised, and
@@ -14,10 +14,6 @@ on:
   schedule:
     # Off the hour, so it is not competing with every other cron job for
     # runner availability.
-    - cron: "23 6 * * *"
-    # Mondays: the same jobs, WITH the paid secrets (proxy, Scraping Browser,
-    # captcha key). On the daily run above those secrets read as empty, so
-    # it takes the free no-secret route and bills nothing.
     - cron: "23 6 * * 1"
   workflow_dispatch:
 
@@ -52,7 +48,7 @@ jobs:
         # failing the job, not the shell's errexit.
         continue-on-error: true
         env:
-          FLIPPA_PROXY: ${{ (github.event_name != 'schedule' || github.event.schedule == '23 6 * * 1') && secrets.FLIPPA_PROXY || '' }}
+          FLIPPA_PROXY: ${{ secrets.FLIPPA_PROXY }}
         run: |
           set +e
           python3 playwright_scraper.py \
