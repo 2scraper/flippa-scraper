@@ -9,6 +9,12 @@ a bill.
 
 ## [Unreleased]
 
+### Changed
+
+- CI only: the canary's optional paid secret `FLIPPA_PROXY` now reaches it only on a new weekly
+  run (Mondays 06:23 UTC) and on a manual dispatch. The daily run keeps its
+  schedule and takes the free route without them, so it bills nothing.
+
 ## [0.3.0] — 2026-10-15
 
 > **Flippa rebuilt its search page between 2026-09-28 and 2026-09-29, and
