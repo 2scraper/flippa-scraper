@@ -1,4 +1,4 @@
-# flippa-scraper
+# Flippa Scraper — Online Businesses for Sale and Asking Prices in Python
 
 [![release](https://img.shields.io/github/v/release/2scraper/flippa-scraper?label=release)](https://github.com/2scraper/flippa-scraper/releases)
 [![tests](https://github.com/2scraper/flippa-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/flippa-scraper/actions/workflows/tests.yml)
@@ -7,6 +7,8 @@
 [![licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![engines](https://img.shields.io/badge/engines-playwright%20%7C%20pyppeteer%20%7C%20selenium%20%7C%20scraper--api-lightgrey)](#four-ways-to-run-it)
 [![runs without an account](https://img.shields.io/badge/runs%20without%20an%20account-yes-brightgreen)](#what-the-paid-products-buy-you)
+
+**Flippa scraper** — an open-source (MIT) Python tool that reads flippa.com search and category listing pages and writes online businesses for sale — asking price, monthly profit and revenue, profit multiple, asset type and industry — to JSON or CSV. On 2026-10-15 the Playwright engine, from a datacentre address with no proxy and no key, returned 150 listings across 3 pages of `?filter[property_type]=saas`. Use it to build a dataset of businesses for sale, or compare two runs with the included diff tool to see what changed.
 
 A working scraper for **flippa.com** listing pages — the marketplace for
 buying and selling online businesses, websites, apps and domains. Any
@@ -311,6 +313,23 @@ the Dockerfile copies what the entrypoint imports, and that nothing
 credential-shaped or personal is committed. `.github/workflows/canary.yml`
 runs one real 3-page scrape a day, because pagination is never exercised by a
 one-page run.
+
+## Guides
+
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [G2 scraper](https://github.com/2scraper/g2-scraper) — Categories, product pages and pricing pages
+- [Google Play scraper](https://github.com/2scraper/googleplay-scraper) — Apps, installs, rating histograms and unbounded reviews…
+- [Better Business Bureau scraper](https://github.com/2scraper/bbb-scraper) — BBB search and category listings with no key or proxy, plus…
+- [Just Join IT scraper](https://github.com/2scraper/justjoin-scraper) — Polish IT job offers with real salaries, seniority, skill…
+- [Mercor scraper](https://github.com/2scraper/mercor-scraper) — AI-talent marketplace: contract roles, rates, eligibility…
+- [Wellfound scraper](https://github.com/2scraper/wellfound-scraper) — Startup jobs from Wellfound with salary and equity ranges…
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
 ## Licence
 
