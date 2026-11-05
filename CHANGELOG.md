@@ -13,6 +13,14 @@ a bill.
 
 - CI only: the canary now runs weekly (Mondays 06:23 UTC) and on a manual dispatch, with its optional secret `FLIPPA_PROXY` passed on every run; the daily schedule is removed.
 
+### Security
+
+- Locks: `certifi` 2026.7.22 → 2026.10.23 in every lock (PYSEC-2026-4320, fixed in 2026.10.18), which had turned the `pip-audit` job red. The CI-only lock also moves `filelock` to 4.2.9 on Python 3.11+ (4.1.0 on 3.10, the newest that supports it) for advisories published against 4.0.6.
+
+### Fixed
+
+- README: the testing section said the canary runs a scrape a day; it has run weekly since 2026-10-16.
+
 ## [0.3.0] — 2026-10-15
 
 > **Flippa rebuilt its search page between 2026-09-28 and 2026-09-29, and

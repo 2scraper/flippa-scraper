@@ -22,7 +22,7 @@ single-site scrapers.
 **Status: live-verified on 2026-10-15 after a site rebuild.** Flippa rebuilt
 its search page between 2026-09-28 and 2026-09-29 (the embedded listing JSON
 and the Angular cards this repo read are gone), and every run from then until
-this release returned 0 listings — the daily canary was red throughout. The
+this release returned 0 listings — the canary, then daily, was red throughout. The
 parser now reads the server-rendered cards: the Playwright engine ran against
 `?filter[property_type]=saas` on 2026-10-15 from a datacentre address with no
 proxy and no key and returned **150 listings across 3 pages, exit 0,
@@ -311,8 +311,8 @@ engine imports its driver at module level, that every call into a shared
 module binds against its real signature, that no name is used undefined, that
 the Dockerfile copies what the entrypoint imports, and that nothing
 credential-shaped or personal is committed. `.github/workflows/canary.yml`
-runs one real 3-page scrape a day, because pagination is never exercised by a
-one-page run.
+runs one real 3-page scrape a week (Mondays, plus on demand), because
+pagination is never exercised by a one-page run.
 
 ## Guides
 
