@@ -259,10 +259,21 @@ if __name__ == "__main__":
         if value is None:
             state = ("placeholder only (treated as unset)"
                      if raw and raw.strip() else "not set")
-        elif "KEY" in env_name or "@" in value:
-            state = f"set ({len(value)} chars, hidden)"
-        else:
+        elif env_name.endswith("_URL"):
+            # The one value that is never a credential: the page to scrape.
             state = f"set ({value})"
+        elif env_name.endswith("_PROXY"):
+            # Host and port only. A proxy in host:port:login:password form
+            # has no "@", and an older check keyed on "@" printed it whole.
+            try:
+                from proxy_pool import mask
+                state = f"set ({mask(value)})"
+            except ImportError:
+                state = f"set ({len(value)} chars, hidden)"
+        else:
+            # A key, a CDP endpoint (its secret may be userinfo OR a query
+            # parameter): nothing about the value is safe to show.
+            state = f"set ({len(value)} chars, hidden)"
         print(f"  {env_name:<22} -> --{dest.replace('_', '-'):<16} {state}")
     extras = unknown_keys()
     if extras:
