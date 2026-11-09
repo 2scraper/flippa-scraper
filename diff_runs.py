@@ -25,11 +25,17 @@ Four buckets, each keyed on sku:
                    original_price, discount_pct, currency, status, sale
                    method or monthly profit
   source_changed — sku present in both with a different price, but also a
-                   different price_source: one run read Flippa's embedded
-                   listing JSON and the other fell back to the rendered card,
-                   so the two are not comparable on price. Reported on its own
+                   different price_source (one run read Flippa's embedded
+                   listing JSON and the other fell back to the rendered card)
+                   or a different currency (Flippa's localised paths convert
+                   prices, and it does not serve one locale consistently), so
+                   the two are not comparable on price. Reported on its own
                    because it says something about our two snapshots, not
                    about the site — and --fail-on-change ignores it.
+
+Two files of DIFFERENT searches are refused (exit 2) unless --force: every
+listing that one query matches and the other does not would read as added
+or removed.
 
 A row this project's parser could not recover a sku for (None) cannot be
 matched across runs at all, so it is counted and reported separately rather
@@ -41,6 +47,7 @@ import json
 import re
 import sys
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import parse_qsl, urlparse
 
 TRACKED_FIELDS = ("price", "original_price", "discount_pct", "currency",
                   "status", "sale_method", "monthly_profit")
@@ -48,6 +55,11 @@ TRACKED_FIELDS = ("price", "original_price", "discount_pct", "currency",
 # The subset of TRACKED_FIELDS whose comparability depends on price_source
 # matching between the two runs — see diff_products.
 PRICE_FIELDS = ("price", "original_price", "discount_pct")
+
+# Amounts expressed in the row's currency. When the currency itself differs
+# between the two runs, every one of these differs by the conversion rate and
+# none of the differences is a price change.
+MONEY_FIELDS = PRICE_FIELDS + ("monthly_profit", "currency")
 
 
 def _load(path: str) -> List[dict]:
@@ -99,12 +111,21 @@ def diff_products(old: List[dict], new: List[dict]) -> dict:
         # the difference is in our own two snapshots. Non-price fields still
         # compare fine.
         sources = (before.get("price_source"), after.get("price_source"))
-        if sources[0] != sources[1] and any(f in field_changes for f in PRICE_FIELDS):
-            price_part = {f: v for f, v in field_changes.items() if f in PRICE_FIELDS}
-            other_part = {f: v for f, v in field_changes.items() if f not in PRICE_FIELDS}
+        currencies = (before.get("currency"), after.get("currency"))
+        # Both currencies known and different: the amounts were converted.
+        # One side None is a row whose currency could not be read, which is
+        # not evidence of a conversion and stays an ordinary change.
+        converted = all(currencies) and currencies[0] != currencies[1]
+        moved = (MONEY_FIELDS if converted
+                 else PRICE_FIELDS if sources[0] != sources[1] else ())
+        if any(f in field_changes for f in moved):
+            price_part = {f: v for f, v in field_changes.items() if f in moved}
+            other_part = {f: v for f, v in field_changes.items() if f not in moved}
             source_changed.append({
                 "sku": sku, "title": after.get("title"),
+                "reason": "currency" if converted else "price_source",
                 "price_source": {"old": sources[0], "new": sources[1]},
+                "currency": {"old": currencies[0], "new": currencies[1]},
                 "changes": price_part,
             })
             field_changes = other_part
@@ -136,11 +157,16 @@ def _print_summary(result: dict) -> None:
         deltas = ", ".join(f"{f}: {v['old']!r} -> {v['new']!r}" for f, v in c["changes"].items())
         print(f"  ~ {c['sku']}  {c['title']}  {deltas}")
     for c in result["source_changed"]:
-        src = c["price_source"]
         deltas = ", ".join(f"{f}: {v['old']!r} -> {v['new']!r}" for f, v in c["changes"].items())
-        print(f"  ? {c['sku']}  {c['title']}  {deltas}  "
-              f"[price_source {src['old']!r} -> {src['new']!r}: the two runs "
-              f"rendered differently, so this is not a site-side price change]")
+        if c.get("reason") == "currency":
+            cur = c["currency"]
+            why = (f"currency {cur['old']!r} -> {cur['new']!r}: the amounts were "
+                   f"converted, so this is not a site-side price change")
+        else:
+            src = c["price_source"]
+            why = (f"price_source {src['old']!r} -> {src['new']!r}: the two runs "
+                   f"rendered differently, so this is not a site-side price change")
+        print(f"  ? {c['sku']}  {c['title']}  {deltas}  [{why}]")
     unmatchable = result["unmatchable_old"] + result["unmatchable_new"]
     if unmatchable:
         print(f"[!] {unmatchable} row(s) across both files had no sku or a "
@@ -162,6 +188,44 @@ def _run_status(path: str) -> Tuple[Optional[str], Optional[dict]]:
     except (OSError, json.JSONDecodeError):
         return None, None
     return meta.get("status"), meta
+
+
+def _search_key(url: Optional[str]):
+    """What makes two start URLs the same search: host (www. ignored), path
+    (trailing slash ignored) and query parameters other than `page`, in any
+    order. None when there is no URL to compare."""
+    if not url:
+        return None
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    query = sorted((k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+                   if k != "page")
+    return host, parsed.path.rstrip("/") or "/", tuple(query)
+
+
+def _check_same_search(args) -> bool:
+    """Refuse a diff between two DIFFERENT searches.
+
+    Two complete runs of "golf" and "chess" diffed as "34 removed, 4 added",
+    exit 1 under --fail-on-change — reading as listings sold, when the two
+    files simply answer different questions. A different locale path
+    (/fr/search) counts as a different search: its prices are converted.
+    """
+    _s, old_meta = _run_status(args.old)
+    _s, new_meta = _run_status(args.new)
+    old_key = _search_key((old_meta or {}).get("start_url"))
+    new_key = _search_key((new_meta or {}).get("start_url"))
+    if old_key is None or new_key is None or old_key == new_key:
+        return True
+    print("[!] Refusing to diff: the two files come from different searches, so "
+          "every listing one matches and the other does not would read as "
+          "added or removed.")
+    print(f"      --old: {old_meta.get('start_url')}")
+    print(f"      --new: {new_meta.get('start_url')}")
+    print("    Pass --force to compare anyway.")
+    return False
 
 
 def _check_comparable(args) -> bool:
@@ -248,14 +312,16 @@ def parse_args():
                         "for a cron job that should only notify on a real diff.")
     p.add_argument("--force", action="store_true",
                    help="Diff even when a run's .meta.json says it was partial "
-                        "or failed. Products never fetched by the short run will "
-                        "appear as added/removed.")
+                        "or failed, or when the two runs are of different "
+                        "searches. Products never fetched by the short run (or "
+                        "matched by only one search) will appear as "
+                        "added/removed.")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    if not args.force and not _check_comparable(args):
+    if not args.force and not (_check_same_search(args) and _check_comparable(args)):
         return 2
 
     try:

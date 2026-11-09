@@ -257,6 +257,16 @@ def scrape(args) -> int:
         seen = {p.sku for p in products if p.sku}
         first_products = products
         for page_num in range(2, args.pages + 1):
+            latest = next((o[1].total_results for o in reversed(outcomes)
+                           if o[1] is not None and o[1].total_results is not None),
+                          None)
+            if page_flow.listing_ends_before(latest, page_num):
+                # Each request here is a billed task: one past the end of the
+                # listing buys nothing the site's own count had not said.
+                logger.info("The site's count says the listing ends before "
+                            "page %d — stopping.", page_num)
+                stop_reason = "listing_exhausted"
+                break
             time.sleep(args.delay)
             state, products = _fetch_page(args, page_num, page_url(args.url, page_num))
             if state is None:
@@ -301,7 +311,7 @@ def scrape(args) -> int:
     all_products, merge_stats = merge_pages(
         (page_num, products) for page_num, _state, products in outcomes)
     if merge_stats.duplicate_skus_across_pages:
-        logger.info("Dropped %d listing(s) already seen on an earlier page "
+        logger.warning("Dropped %d listing(s) already seen on an earlier page "
                     "(page(s) %s).", merge_stats.duplicate_skus_across_pages,
                     ", ".join(str(n) for n in merge_stats.duplicate_pages))
 
@@ -318,7 +328,8 @@ def scrape(args) -> int:
                       addressable=addressable, merge_stats=merge_stats,
                       total_results_first=counted[0] if counted else None,
                       total_results_last=counted[-1] if counted else None,
-                      start_url=args.url, final_url=args.url)
+                      start_url=args.url, final_url=args.url,
+                      route="scraper_api")
 
 
 def parse_args():
@@ -377,6 +388,8 @@ def parse_args():
     # unusable value there fails in exactly the same way.
     for problem in cli_types.check_listing_url(args.url):
         p.error(problem)
+    for problem in cli_types.check_out_prefix(args.out):
+        p.error(problem)
     if not cli_types.host_is_expected(args.url):
         logger.warning("--url points at %s, not %s: the parser reads Flippa's "
                        "own page shape and will most likely find nothing there.",
@@ -390,9 +403,12 @@ def parse_args():
         # /search and EUR 380,546 on /fr/search on 2026-09-19. The currency
         # column follows the page, and two locales do not belong in one
         # dataset.
-        logger.info("This URL is Flippa's %s localisation: labels are "
-                    "translated and prices are CONVERTED into that locale's "
-                    "currency.", locale.upper())
+        logger.info("This URL asks for Flippa's %s localisation, where labels "
+                    "are translated and prices CONVERTED into that locale's "
+                    "currency — when the site honours it, which it does not "
+                    "always do. The currency column records what each page "
+                    "actually carried; the run warns if pages disagree.",
+                    locale.upper())
     return args
 
 

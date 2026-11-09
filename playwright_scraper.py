@@ -68,7 +68,7 @@ from output_writer import (EXIT_API_ERROR, failure_stop_reason, finish_run,
                            merge_pages)
 from product_parser import (SELECTORS, category_from_url, locale_from_url,
                             page_url, parse_products)
-from proxy_pool import (CDP_CONNECT_ATTEMPTS, CDP_CONNECT_PAUSE_S, CDP_CONNECT_TIMEOUT_S,
+from proxy_pool import (route_name, CDP_CONNECT_ATTEMPTS, CDP_CONNECT_PAUSE_S, CDP_CONNECT_TIMEOUT_S,
                         ROTATE_MODES, cdp_refusal_advice, cdp_retryable, ProxyError, ProxyPool,
                         check_exit_or_raise,
                         from_args as proxy_pool_from_args, mask,
@@ -318,7 +318,7 @@ def _content_when_settled(page, attempts: int = 4, pause_ms: int = 700):
     return None
 
 
-def _wait_for_cards(page, timeout_ms: int = RENDER_WAIT_MS) -> int:
+def _wait_for_cards(page, page_num: int = 1, timeout_ms: int = RENDER_WAIT_MS) -> int:
     """Wait for the rendered grid, WITHOUT evaluating a string.
 
     `page.locator(...).count()` goes through the protocol, so it works under
@@ -327,6 +327,10 @@ def _wait_for_cards(page, timeout_ms: int = RENDER_WAIT_MS) -> int:
 
     Returns the number of cards seen. Not reaching MIN_CARD_MATCHES is not a
     failure here: Flippa's data is in the served HTML either way.
+
+    A page that is short ON PURPOSE — "Show 4 results", "Show 0 results", the
+    last page, a page past the end — ends the wait as soon as it holds what
+    its own count implies, rather than after the full timeout.
     """
     deadline = time.monotonic() + timeout_ms / 1000.0
     count = 0
@@ -337,6 +341,12 @@ def _wait_for_cards(page, timeout_ms: int = RENDER_WAIT_MS) -> int:
             logger.debug("Counting cards failed (%s) — retrying.", e)
             count = 0
         if count > MIN_CARD_MATCHES:
+            return count
+        try:
+            html = page.content()
+        except PWError:      # mid-navigation: look again on the next pass
+            html = None
+        if html and page_flow.page_answered(html, count, page_num):
             return count
         page.wait_for_timeout(400)
     return count
@@ -489,7 +499,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
         if handle_captcha_if_present(session.page, args, budget, status):
             status = None   # the reload replaced the document it described
-        cards = _wait_for_cards(session.page)
+        cards = _wait_for_cards(session.page, page_num)
         html = _content_when_settled(session.page) or ""
         state = page_flow.classify(html, status_code=status, url=session.page.url)
         logger.info("Page %d is %s (%d card(s) rendered).", page_num, state, cards)
@@ -692,7 +702,7 @@ def _fetch_pages_concurrently(args, pool, specs, concurrency: int):
             min(empty_pages) if empty_pages else None)
 
 
-def _addressable(first: PageOutcome, second: PageOutcome) -> bool:
+def _addressable(first: PageOutcome, second: PageOutcome) -> Optional[bool]:
     """Did the constructed page-2 URL actually reach page 2?
 
     The check the family's most expensive bug calls for, in the
@@ -701,12 +711,26 @@ def _addressable(first: PageOutcome, second: PageOutcome) -> bool:
     work and pages 3..N cannot be addressed either — which is exactly what
     happened here once, when a page parameter the site ignored made every
     "3-page" run return one page of rows and report success.
+
+    None when page 2 is legitimately past the end of the listing: there was
+    nothing there to prove or disprove, and False would read as "pagination
+    is broken" on every one-page search.
     """
+    if second.ok and second.complete_here:
+        return None
     if not second.ok or not second.products:
         return False
     first_ids = {p.sku for p in first.products if p.sku}
     fresh = [p for p in second.products if p.sku and p.sku not in first_ids]
     return bool(fresh)
+
+
+def _latest_total(outcomes) -> Optional[int]:
+    """Flippa's match count as of the most recent page that reported one."""
+    for o in sorted(outcomes, key=lambda o: o.page_num, reverse=True):
+        if o.state is not None and o.state.total_results is not None:
+            return o.state.total_results
+    return None
 
 
 def scrape(args) -> int:
@@ -764,9 +788,20 @@ def scrape(args) -> int:
             elif first.complete_here:
                 stop_reason = ("no_results" if first.state.state == page_flow.EMPTY
                                else "listing_exhausted")
+            elif args.pages > 1 and page_flow.listing_ends_before(total_results, 2):
+                logger.info("Page 1 holds all %d match(es) the site reports — "
+                            "not fetching page 2.", total_results)
+                stop_reason = "listing_exhausted"
             elif args.pages > 1:
                 # Page 2 is fetched sequentially whatever --concurrency says:
                 # it is what proves pages can be addressed by URL at all.
+                # Rotated and paced exactly like every later page: per-page
+                # rotation used to start at page 3, and page 2 went out in the
+                # same millisecond page 1 was parsed, whatever --delay said.
+                if pool and pool.rotates_per_page():
+                    pool.advance("per-page rotation, page 2")
+                    session.relaunch()
+                time.sleep(args.delay)
                 second = _fetch_one_page(session, args, pool, 2, page_url(args.url, 2))
                 outcomes.append(second)
                 addressable = _addressable(first, second)
@@ -787,8 +822,22 @@ def scrape(args) -> int:
                         "run rather than a complete-looking one.",
                         page_url(args.url, 2))
                     stop_reason = "pagination_not_addressable"
+                elif args.pages > 2 and page_flow.listing_ends_before(
+                        _latest_total(outcomes), 3):
+                    logger.info("Pages 1-2 hold every match the site reports — "
+                                "not fetching page 3.")
+                    stop_reason = "listing_exhausted"
                 elif args.pages > 2:
-                    rest = list(range(3, args.pages + 1))
+                    rest = [n for n in range(3, args.pages + 1)
+                            if not page_flow.listing_ends_before(
+                                _latest_total(outcomes), n)]
+                    if len(rest) < args.pages - 2:
+                        logger.info("The site reports %d match(es), so the "
+                                    "listing ends before page %d — fetching "
+                                    "pages 3-%d only.", _latest_total(outcomes),
+                                    rest[-1] + 1 if rest else 3,
+                                    rest[-1] if rest else 2)
+                    trimmed = len(rest) < args.pages - 2
                     specs = [(n, page_url(args.url, n)) for n in rest]
                     if concurrency > 1:
                         session.close()
@@ -829,6 +878,13 @@ def scrape(args) -> int:
                     else:
                         seen = {p.sku for o in outcomes for p in o.products if p.sku}
                         for page_num, url in specs:
+                            if page_flow.listing_ends_before(
+                                    _latest_total(outcomes), page_num):
+                                logger.info("The site's count says the listing "
+                                            "ends before page %d — stopping.",
+                                            page_num)
+                                stop_reason = "listing_exhausted"
+                                break
                             if pool and pool.rotates_per_page():
                                 pool.advance(f"per-page rotation, page {page_num}")
                                 session.relaunch()
@@ -855,6 +911,10 @@ def scrape(args) -> int:
                                             "the listing.", page_num)
                                 stop_reason = "no_new_listings"
                                 break
+                    if trimmed and stop_reason == "completed":
+                        # Every page the site's count allows was fetched; the
+                        # rest of --pages lies past the end of the listing.
+                        stop_reason = "listing_exhausted"
         finally:
             if session is not None:
                 session.close()
@@ -863,7 +923,7 @@ def scrape(args) -> int:
     all_products, merge_stats = merge_pages(
         (o.page_num, o.products) for o in outcomes)
     if merge_stats.duplicate_skus_across_pages:
-        logger.info("Dropped %d listing(s) already seen on an earlier page "
+        logger.warning("Dropped %d listing(s) already seen on an earlier page "
                     "(page(s) %s). Recorded in the metadata: a repeat means "
                     "the catalogue shifted under the run.",
                     merge_stats.duplicate_skus_across_pages,
@@ -888,7 +948,8 @@ def scrape(args) -> int:
                       merge_stats=merge_stats,
                       total_results_first=counted[0] if counted else None,
                       total_results_last=counted[-1] if counted else None,
-                      start_url=args.url, final_url=final_url)
+                      start_url=args.url, final_url=final_url,
+                      route=route_name(pool, args.cdp_endpoint))
 
 
 def parse_args():
@@ -983,6 +1044,8 @@ def parse_args():
     # unusable value there fails in exactly the same way.
     for problem in cli_types.check_listing_url(args.url):
         p.error(problem)
+    for problem in cli_types.check_out_prefix(args.out):
+        p.error(problem)
     if not cli_types.host_is_expected(args.url):
         logger.warning("--url points at %s, not %s: the parser reads Flippa's "
                        "own page shape and will most likely find nothing there.",
@@ -996,9 +1059,12 @@ def parse_args():
         # /search and EUR 380,546 on /fr/search on 2026-09-19. The currency
         # column follows the page, and two locales do not belong in one
         # dataset.
-        logger.info("This URL is Flippa's %s localisation: labels are "
-                    "translated and prices are CONVERTED into that locale's "
-                    "currency.", locale.upper())
+        logger.info("This URL asks for Flippa's %s localisation, where labels "
+                    "are translated and prices CONVERTED into that locale's "
+                    "currency — when the site honours it, which it does not "
+                    "always do. The currency column records what each page "
+                    "actually carried; the run warns if pages disagree.",
+                    locale.upper())
     return args
 
 

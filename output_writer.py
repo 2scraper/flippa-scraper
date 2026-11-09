@@ -352,7 +352,10 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
              duplicate_pages: Optional[List[int]] = None,
              total_results_first: Optional[int] = None,
              total_results_last: Optional[int] = None,
-             catalog_mutated: Optional[bool] = None) -> dict:
+             catalog_mutated: Optional[bool] = None,
+             currencies_by_page: Optional[dict] = None,
+             currency_mixed: Optional[bool] = None,
+             route: Optional[str] = None) -> dict:
     """Build the metadata dict for a finished run.
 
     `status` is the field a consumer branches on:
@@ -399,6 +402,16 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
     page. Together they are how a reader judges whether the catalogue was
     being edited underneath the run — see merge_pages for why the duplicate
     count alone cannot answer that.
+
+    `currencies_by_page` maps each page to the currency its rows carried, and
+    `currency_mixed` is true when two pages disagree. Flippa's localised
+    paths convert prices, and the site does not serve the requested locale
+    consistently: on 2026-11-02 a /fr/ run came back EUR on page 1 and USD on
+    pages 2-3, and on 2026-11-09 the same URL was USD on every page.
+
+    `route` is how the pages were fetched: direct, proxy, proxy_pool, cdp
+    (a remote browser such as the 2Captcha Scraping Browser API) or
+    scraper_api. Without it a finished file cannot say which path produced it.
     """
     return {
         "source": SOURCE,
@@ -418,10 +431,30 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
         "total_results_first": total_results_first,
         "total_results_last": total_results_last,
         "catalog_mutated": catalog_mutated,
+        "currencies_by_page": currencies_by_page or {},
+        "currency_mixed": currency_mixed,
+        "route": route,
         "start_url": start_url,
         "final_url": final_url,
         "finished_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def page_currencies(products: List[Product]) -> dict:
+    """{page: the currency most of that page's priced rows carry}.
+
+    The majority, not "any": a single row without a price has no currency
+    and must not make a page look mixed. Pages with no priced row are left
+    out.
+    """
+    counts: dict = {}
+    for p in products:
+        cur = getattr(p, "currency", None)
+        page = getattr(p, "page", None)
+        if cur and page is not None:
+            counts.setdefault(page, {}).setdefault(cur, 0)
+            counts[page][cur] += 1
+    return {page: max(c, key=c.get) for page, c in counts.items()}
 
 
 def save(products: List[Product], out_prefix: str, fmt: str,
@@ -491,7 +524,8 @@ def finish_run(products: List[Product], out_prefix: str, fmt: str,
                pages_missing: Optional[List[int]] = None,
                merge_stats: Optional[MergeStats] = None,
                total_results_first: Optional[int] = None,
-               total_results_last: Optional[int] = None) -> int:
+               total_results_last: Optional[int] = None,
+               route: Optional[str] = None) -> int:
     """Write output + the run-metadata sidecar; return the exit code.
 
     Shared by all engines so the status/exit-code mapping cannot drift between
@@ -534,6 +568,15 @@ def finish_run(products: List[Product], out_prefix: str, fmt: str,
               f"{total_results_last} while this run was collecting: the catalogue "
               f"was edited underneath it, so a listing may have been stepped over "
               f"between two pages. Recorded as catalog_mutated in the metadata.")
+    currencies_by_page = page_currencies(products)
+    distinct = {c for c in currencies_by_page.values() if c}
+    currency_mixed = (len(distinct) > 1) if currencies_by_page else None
+    if currency_mixed:
+        print("[!] WARNING: pages of this run carry different currencies ("
+              + ", ".join(f"page {n}: {c}" for n, c in sorted(currencies_by_page.items()))
+              + "). Flippa served a different locale on some pages, so prices "
+              "in this file are not comparable with each other. Recorded as "
+              "currency_mixed in the metadata.")
     save_stats: dict = {}
     rc = save(products, out_prefix, fmt, allow_empty=allow_empty, stats=save_stats)
     wrote_output = bool(products) or allow_empty
@@ -558,6 +601,8 @@ def finish_run(products: List[Product], out_prefix: str, fmt: str,
             total_results_first=total_results_first,
             total_results_last=total_results_last,
             catalog_mutated=catalog_mutated,
+            currencies_by_page={str(n): c for n, c in currencies_by_page.items()},
+            currency_mixed=currency_mixed, route=route,
             start_url=start_url, final_url=final_url, products=len(products))
         # Housekeeping goes UNDER the run's own fields: a name collision must
         # never let a write statistic overwrite something the run reported.

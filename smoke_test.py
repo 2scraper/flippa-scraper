@@ -1533,10 +1533,51 @@ def check_proxy_preflight():
             check("and the message says it is the exit, not the site",
                   "not the site" in str(e))
             check("and carries no credentials", "pass@" not in str(e))
+        # Slow TARGET, live exit: the neutral address answers, so only warn.
+        proxy_pool.preflight = lambda url, target, timeout=15.0: (
+            (proxy_pool.PREFLIGHT_OK, "HTTP 204")
+            if target == proxy_pool.NEUTRAL_PREFLIGHT_URL
+            else (proxy_pool.PREFLIGHT_SLOW, "read timed out"))
+        proxy_pool.check_exit_or_raise(pool, "https://flippa.com/search")
+        check("a slow target only warns when the exit answers a neutral address",
+              True)
+        # Dead exit: neither the target nor the neutral address answers.
+        # Measured 2026-11-02: let through with a warning, it cost two
+        # minutes of browser timeouts and ended in exit 5.
         proxy_pool.preflight = lambda url, target, timeout=15.0: (
             proxy_pool.PREFLIGHT_SLOW, "read timed out")
-        proxy_pool.check_exit_or_raise(pool, "https://flippa.com/search")
-        check("a slow exit only warns — the target may be what is slow", True)
+        try:
+            proxy_pool.check_exit_or_raise(pool, "https://flippa.com/search")
+            check("an exit that answers nothing at all stops the run", False)
+        except proxy_pool.ProxyError as e:
+            check("an exit that answers nothing at all stops the run (exit 2)",
+                  "neutral address" in str(e))
+
+        # A dead FIRST line of a pool is dropped and the next exit is used —
+        # it used to end the run with exit 2 while working exits sat behind it.
+        dead, good = ("http://u:p@127.0.0.1:9",
+                      "http://u:p@gate.example.com:9999")
+        mixed = proxy_pool.ProxyPool([dead, good, "http://u:p@b.example.com:1"])
+        proxy_pool.preflight = lambda url, target, timeout=15.0: (
+            (proxy_pool.PREFLIGHT_UNUSABLE, "Unable to connect to proxy")
+            if url == dead else (proxy_pool.PREFLIGHT_OK, "HTTP 200"))
+        try:
+            proxy_pool.check_exit_or_raise(mixed, "https://flippa.com/search")
+            check("a dead first exit in a pool is skipped, not fatal", True)
+        except proxy_pool.ProxyError:
+            check("a dead first exit in a pool is skipped, not fatal", False)
+        eq("and the run starts on the next exit", mixed.current, good)
+        check("and the dead exit is gone from the pool, so no rotation or "
+              "--concurrency worker can land on it", dead not in mixed.proxies)
+        all_dead = proxy_pool.ProxyPool([dead, "http://u:p@127.0.0.1:10"])
+        proxy_pool.preflight = lambda url, target, timeout=15.0: (
+            proxy_pool.PREFLIGHT_REJECTED, "407")
+        try:
+            proxy_pool.check_exit_or_raise(all_dead, "https://flippa.com/search")
+            check("a pool in which no exit works is exit 2", False)
+        except proxy_pool.ProxyError as e:
+            check("a pool in which no exit works is exit 2, naming every exit",
+                  "None of the 2" in str(e) and ":p@" not in str(e))
         proxy_pool.preflight = lambda url, target, timeout=15.0: (
             proxy_pool.PREFLIGHT_OK, "HTTP 200")
         proxy_pool.check_exit_or_raise(pool, "https://flippa.com/search")
@@ -3149,9 +3190,7 @@ def check_fingerprint_refusal_is_an_api_error():
         # dead proxy and the check measures that. The browser path is kept.
         env = dict(os.environ, HTTPS_PROXY="http://127.0.0.1:9",
                    HTTP_PROXY="http://127.0.0.1:9", HOME=tmp,
-                   PLAYWRIGHT_BROWSERS_PATH=os.environ.get(
-                       "PLAYWRIGHT_BROWSERS_PATH",
-                       os.path.join(os.path.expanduser("~"), ".cache", "ms-playwright")),
+                   PLAYWRIGHT_BROWSERS_PATH=_browsers_root(browser_path),
                    **{name: "" for name in env_config.ENV_KEYS})
         run = subprocess.run(
             [sys.executable, os.path.join(REPO, "playwright_scraper.py"),
@@ -3167,6 +3206,26 @@ def check_fingerprint_refusal_is_an_api_error():
     check("and the key, which rides in this endpoint's query string, is not "
           "printed", fake_key not in text)
 
+
+
+def _browsers_root(executable_path: str) -> str:
+    """The PLAYWRIGHT_BROWSERS_PATH that holds `executable_path`.
+
+    Taken from where Playwright actually found its browser, not assumed: the
+    default is ~/.cache/ms-playwright on Linux but ~/Library/Caches/ms-playwright
+    on macOS and %LOCALAPPDATA%\\ms-playwright on Windows, and a check that
+    hardcoded the Linux one failed on every clean Mac.
+    """
+    path = os.path.abspath(executable_path)
+    while True:
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        if re.match(r"chromium(_headless_shell)?-\d+$", os.path.basename(path)):
+            return parent
+        path = parent
+    return os.environ.get("PLAYWRIGHT_BROWSERS_PATH",
+                          os.path.dirname(os.path.dirname(executable_path)))
 
 
 def check_family_sync_2026_09_29():
@@ -3328,6 +3387,359 @@ def check_supply_chain():
               not missing)
         check(f"{lock} carries hashes", "--hash=sha256:" in open(os.path.join(REPO, lock), encoding="utf-8").read())
 
+def _engine_args(tmp, **kw):
+    """A namespace with every attribute the engines' scrape() reads."""
+    import types
+    base = dict(url="https://flippa.com/search?query%5Bkeyword%5D=golf",
+                pages=3, delay=0, concurrency=1, cdp_endpoint=None,
+                proxy=None, proxy_file=None, proxy_rotate="per-run",
+                proxy_shuffle=False, proxy_block_retries=0, retries=1,
+                retry_delay=0, out=os.path.join(tmp, "run"), format="json",
+                allow_empty=False, category="saas", dump_html=None,
+                fingerprint=False, headless=True)
+    base.update(kw)
+    return types.SimpleNamespace(**base)
+
+
+def _paged_outcome(engine, page_num, url, total):
+    """The outcome a real page of a `total`-match listing would produce."""
+    outcome = engine.PageOutcome(page_num=page_num, url=url)
+    expected = page_flow.expected_records(total, page_num)
+    if expected == 0:
+        outcome.state = page_flow.PageState(
+            page_flow.EXHAUSTED, "stub past the end", total_results=total)
+        return outcome
+    outcome.state = page_flow.PageState(page_flow.CONTENT, "stub",
+                                        total_results=total)
+    outcome.products = [_row(sku=f"p{page_num}-{i}", page=page_num,
+                             currency="USD") for i in range(expected)]
+    return outcome
+
+
+def check_audit_2026_11_09():
+    """Defects from the manual test of 2026-11-02/05, re-checked 2026-11-09."""
+    print("\n[audit 2026-11-09]")
+    import diff_runs
+
+    # -- the site's own count ends the readiness wait and the page loop -----
+    def count_html(n):
+        return f'<button id="filters-show-results-count">Show {n} results</button>'
+    check("a 4-match page with its 4 cards has answered (no 15 s wait)",
+          page_flow.page_answered(count_html(4), 4, 1))
+    check("'Show 0 results' has answered", page_flow.page_answered(count_html(0), 0, 1))
+    check("a page past the end has answered", page_flow.page_answered(count_html(34), 0, 2))
+    check("a full page still waiting for its cards has NOT answered",
+          not page_flow.page_answered(count_html(677), 3, 1))
+    check("nor has a page with no count yet", not page_flow.page_answered("<html>", 3, 1))
+    check("nor a capped count, which says nothing about this page",
+          not page_flow.page_answered(count_html("10,000+"), 3, 1))
+    check("34 matches end before page 2", page_flow.listing_ends_before(34, 2))
+    check("60 matches do not end before page 2",
+          not page_flow.listing_ends_before(60, 2))
+    check("an unknown or capped count never ends the listing early",
+          not page_flow.listing_ends_before(None, 2)
+          and not page_flow.listing_ends_before(10000, 300))
+    check("a 429 says it is a rate limit and what helps",
+          "rate-limited" in page_flow.classify("", status_code=429).reason)
+
+    # -- engines: no page past the count, rotation and pacing from page 2 ---
+    for name in ("playwright_scraper", "selenium_scraper", "puppeteer_scraper"):
+        engine = ENGINES.get(name)
+        if engine is None:
+            skip(f"{name} stops at the site's count", f"{name} not importable")
+            continue
+        is_async = name == "puppeteer_scraper"
+
+        class _Session:
+            relaunches = 0
+
+            def __init__(self, *a, **kw):
+                self.pool = None
+
+            def open(self):
+                return self
+
+            def relaunch(self):
+                _Session.relaunches += 1
+
+            def close(self):
+                pass
+
+        class _AsyncSession(_Session):
+            async def open(self):
+                return self
+
+            async def relaunch(self):
+                _Session.relaunches += 1
+
+            async def close(self):
+                pass
+
+        class _PW:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        saved = {k: getattr(engine, k) for k in
+                 ("_BrowserSession", "_fetch_one_page", "check_exit_or_raise", "time")
+                 if hasattr(engine, k)}
+        if hasattr(engine, "sync_playwright"):
+            saved["sync_playwright"] = engine.sync_playwright
+        fetched, sleeps = [], []
+        total = {"n": 34}
+
+        class _Time:
+            monotonic = staticmethod(__import__("time").monotonic)
+
+            @staticmethod
+            def sleep(s):
+                sleeps.append(("sleep", s))
+
+        def fetch(session, args, pool, page_num, url):
+            fetched.append(page_num)
+            sleeps.append(("fetch", page_num))
+            return _paged_outcome(engine, page_num, url, total["n"])
+
+        async def afetch(session, args, pool, page_num, url):
+            return fetch(session, args, pool, page_num, url)
+
+        def run(args):
+            fetched.clear()
+            sleeps.clear()
+            _Session.relaunches = 0
+            with redirect_stdout(io.StringIO()):
+                if is_async:
+                    import asyncio
+                    rc = asyncio.run(engine._scrape(args))
+                else:
+                    rc = engine.scrape(args)
+            meta = json.load(open(f"{args.out}.meta.json", encoding="utf-8"))
+            return rc, meta
+
+        try:
+            engine._BrowserSession = _AsyncSession if is_async else _Session
+            engine._fetch_one_page = afetch if is_async else fetch
+            engine.check_exit_or_raise = lambda *a, **k: None
+            engine.time = _Time
+            if "sync_playwright" in saved:
+                engine.sync_playwright = lambda: _PW()
+            with tempfile.TemporaryDirectory() as tmp:
+                total["n"] = 34
+                rc, meta = run(_engine_args(tmp, pages=3))
+                eq(f"{name}: a 34-match search fetches page 1 only", fetched, [1])
+                check(f"{name}: and is complete, exit 0",
+                      rc == 0 and meta["status"] == "complete"
+                      and meta["stop_reason"] == "listing_exhausted")
+                eq(f"{name}: addressable is unknown, not False, on a one-page "
+                   "listing", meta.get("addressable", "missing"), None)
+
+                total["n"] = 120
+                rc, meta = run(_engine_args(tmp, pages=5))
+                eq(f"{name}: 120 matches fetch pages 1-3 of 5 requested",
+                   fetched, [1, 2, 3])
+                check(f"{name}: and that is a complete run, not a partial one",
+                      rc == 0 and meta["status"] == "complete")
+                eq(f"{name}: a direct run records its route", meta.get("route"), "direct")
+
+                if name == "playwright_scraper":
+                    first = _paged_outcome(engine, 1, "u1", 34)
+                    past = _paged_outcome(engine, 2, "u2", 34)
+                    eq("playwright_scraper: a page 2 past the end proves nothing "
+                       "about pagination", engine._addressable(first, past), None)
+                    rc, meta = run(_engine_args(tmp, pages=5, concurrency=2))
+                    eq("playwright_scraper: --concurrency plans only the pages "
+                       "the count allows", sorted(fetched), [1, 2, 3])
+                    check("playwright_scraper: and calls it complete",
+                          rc == 0 and meta["status"] == "complete")
+
+                total["n"] = 500
+                pool_file = os.path.join(tmp, "pool.txt")
+                with open(pool_file, "w", encoding="utf-8") as f:
+                    f.write("http://a.example.com:1\nhttp://b.example.com:1\n"
+                            "http://c.example.com:1\n")
+                rc, meta = run(_engine_args(tmp, pages=3, proxy_file=pool_file,
+                                            proxy_rotate="per-page",
+                                            delay=0 if is_async else 7))
+                eq(f"{name}: per-page rotation relaunches before pages 2 and 3",
+                   _Session.relaunches, 2)
+                eq(f"{name}: a pool run records its route", meta.get("route"),
+                   "proxy_pool")
+                if not is_async:
+                    i = sleeps.index(("fetch", 2))
+                    check(f"{name}: --delay is honoured before page 2 too",
+                          ("sleep", 7) in sleeps[:i])
+        finally:
+            for k, v in saved.items():
+                setattr(engine, k, v)
+
+    # Scraper API: each page past the end would be a billed task.
+    try:
+        import scraper_api_client as sac
+    except ImportError as e:
+        skip("scraper_api_client stops at the count", str(e))
+    else:
+        asked = []
+
+        def fake_page(args, page_num, url):
+            asked.append(page_num)
+            expected = page_flow.expected_records(34, page_num)
+            state = page_flow.PageState(page_flow.CONTENT if expected else
+                                        page_flow.EXHAUSTED, "stub",
+                                        total_results=34)
+            return state, [_row(sku=f"s{page_num}-{i}", page=page_num)
+                           for i in range(expected or 0)]
+        real = sac._fetch_page
+        sac._fetch_page = fake_page
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                args = _engine_args(tmp, pages=3)
+                with redirect_stdout(io.StringIO()):
+                    rc = sac.scrape(args)
+                eq("scraper_api_client: no billed task past the site's count",
+                   asked, [1])
+                meta = json.load(open(f"{args.out}.meta.json", encoding="utf-8"))
+                eq("scraper_api_client: route recorded", meta.get("route"), "scraper_api")
+        finally:
+            sac._fetch_page = real
+
+    # -- one file, one currency (or a loud warning saying otherwise) --------
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = ([_row(sku=f"e{i}", page=1, currency="EUR") for i in range(3)]
+                + [_row(sku=f"u{i}", page=2, currency="USD") for i in range(3)]
+                + [_row(sku="n", page=2, currency=None)])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            output_writer.finish_run(
+                rows, os.path.join(tmp, "fr"), "json", False, blocked=False,
+                stop_reason="completed", pages_requested=2, pages_completed=2,
+                start_url="https://flippa.com/fr/search", final_url="x",
+                route="direct")
+        meta = json.load(open(os.path.join(tmp, "fr.meta.json"), encoding="utf-8"))
+        check("a run whose pages carry different currencies is flagged",
+              meta.get("currency_mixed") is True
+              and meta.get("currencies_by_page") == {"1": "EUR", "2": "USD"})
+        check("and says so in the log", "WARNING" in buf.getvalue()
+              and "page 1: EUR" in buf.getvalue())
+        with redirect_stdout(io.StringIO()):
+            output_writer.finish_run(
+                rows[3:], os.path.join(tmp, "us"), "json", False, blocked=False,
+                stop_reason="completed", pages_requested=1, pages_completed=1,
+                start_url="https://flippa.com/search", final_url="x")
+        meta = json.load(open(os.path.join(tmp, "us.meta.json"), encoding="utf-8"))
+        eq("one currency plus an unpriced row is not mixed",
+           meta.get("currency_mixed"), False)
+
+    # -- diff: a conversion is not a price change; two searches are refused -
+    with tempfile.TemporaryDirectory() as tmp:
+        def write(prefix, rows, start_url):
+            with open(f"{prefix}.json", "w", encoding="utf-8") as f:
+                json.dump(rows, f)
+            with open(f"{prefix}.meta.json", "w", encoding="utf-8") as f:
+                json.dump({"status": "complete", "coverage": "exhaustive",
+                           "start_url": start_url}, f)
+        old, new = os.path.join(tmp, "old"), os.path.join(tmp, "new")
+        real_argv = sys.argv
+
+        def run_diff(*flags):
+            out = os.path.join(tmp, "d.json")
+            sys.argv = ["diff_runs.py", "--old", f"{old}.json", "--new",
+                        f"{new}.json", "--out", out, *flags]
+            with redirect_stdout(io.StringIO()):
+                rc = diff_runs.main()
+            return rc, (json.load(open(out, encoding="utf-8"))
+                        if os.path.exists(out) else None)
+        try:
+            row = {"sku": "1", "price_source": "state", "status": "open"}
+            write(old, [dict(row, price=29940.0, currency="EUR",
+                             monthly_profit=1100.0)],
+                  "https://flippa.com/search?filter%5Bproperty_type%5D=saas")
+            write(new, [dict(row, price=33600.0, currency="USD",
+                             monthly_profit=1230.0)],
+                  "https://www.flippa.com/search?filter%5Bproperty_type%5D=saas&page=1")
+            rc, result = run_diff("--fail-on-change")
+            check("a currency conversion is not reported as a price change",
+                  rc == 0 and result["changed"] == []
+                  and (result["source_changed"] or [{}])[0].get("reason") == "currency")
+            write(old, [dict(row, price=1.0)], "https://flippa.com/search?query%5Bkeyword%5D=golf")
+            write(new, [dict(row, price=1.0)], "https://flippa.com/search?query%5Bkeyword%5D=chess")
+            if os.path.exists(os.path.join(tmp, "d.json")):
+                os.remove(os.path.join(tmp, "d.json"))
+            rc, _ = run_diff("--fail-on-change")
+            eq("two different searches are refused, not diffed", rc, 2)
+            rc, _ = run_diff("--force")
+            eq("unless --force", rc, 0)
+        finally:
+            sys.argv = real_argv
+
+    # -- --out is checked before a browser starts ----------------------------
+    with tempfile.TemporaryDirectory() as tmp:
+        eq("a creatable --out directory is fine",
+           cli_types.check_out_prefix(os.path.join(tmp, "a", "b", "x")), [])
+        blocker = os.path.join(tmp, "file")
+        open(blocker, "w").close()
+        check("--out under a regular file is refused",
+              cli_types.check_out_prefix(os.path.join(blocker, "x")) != [])
+        locked = os.path.join(tmp, "locked")
+        os.mkdir(locked, 0o500)
+        if os.geteuid() != 0:
+            check("--out into an unwritable directory is refused",
+                  cli_types.check_out_prefix(os.path.join(locked, "sub", "x")) != [])
+        os.chmod(locked, 0o700)
+    for name in ("playwright_scraper", "selenium_scraper", "puppeteer_scraper",
+                 "scraper_api_client"):
+        source = open(os.path.join(REPO, f"{name}.py"), encoding="utf-8").read()
+        check(f"{name} checks --out at argument time",
+              "cli_types.check_out_prefix(args.out)" in source)
+
+    # -- the proxy listing format, and every message about it ---------------
+    secret = "S3cr" + "etPw"
+    for line in (f"http://eu.proxy.example.com:2334:USERX:{secret}",
+                 f"eu.proxy.example.com:2334:USERX:{secret}"):
+        try:
+            parsed = proxy_pool.parse_proxy_line(line)
+            eq(f"host:port:login:password is read as a URL ({line[:7]}…)",
+               proxy_pool.mask(parsed), "http://***:***@eu.proxy.example.com:2334")
+            pw = proxy_pool.to_playwright(parsed)
+            check("and its password reaches the browser's own field",
+                  pw.get("password") == secret and secret not in pw["server"])
+        except Exception as e:  # noqa: BLE001
+            check(f"host:port:login:password is read as a URL: {type(e).__name__}", False)
+    for bad in (f"http://h.example.com:23x4:u:{secret}", f"h.example.com:{secret}"):
+        try:
+            proxy_pool.parse_proxy_line(bad)
+            check(f"an unusable proxy value is refused ({bad[:12]}…)", False)
+        except proxy_pool.ProxyError as e:
+            check("an unusable proxy value is refused without quoting its "
+                  "password", secret not in str(e))
+        except Exception as e:  # noqa: BLE001
+            check(f"an unusable proxy value is a ProxyError, not {type(e).__name__}",
+                  False)
+    check("mask() never raises on a malformed value",
+          secret not in proxy_pool.mask(f"http://h:9:9:u:{secret}"))
+    check("the colon form is redacted in free text",
+          secret not in proxy_pool.redact_secret_patterns(
+              f"failed via eu.proxy.example.com:2334:USERX:{secret} today"))
+
+    # -- `python3 env_config.py` shows nothing secret -----------------------
+    import subprocess
+    env = dict(os.environ, FLIPPA_PROXY=f"eu.proxy.example.com:2334:USERX:{secret}",
+               FLIPPA_CDP_ENDPOINT=f"wss://cb.example.com:9222/?token={secret}",
+               TWOCAPTCHA_KEY=secret * 4)
+    out = subprocess.run([sys.executable, os.path.join(REPO, "env_config.py")],
+                         cwd=REPO, env=env, capture_output=True, text=True,
+                         timeout=60).stdout
+    check("env_config.py prints no proxy password, CDP token or key",
+          secret not in out and "eu.proxy.example.com:2334" in out)
+
+    # -- the fingerprint check finds Playwright's browsers on any OS --------
+    eq("the browsers root is read off the executable path (macOS layout)",
+       _browsers_root("/Users/x/Library/Caches/ms-playwright/chromium-1248/"
+                      "chrome-mac/Chromium.app/Contents/MacOS/Chromium"),
+       "/Users/x/Library/Caches/ms-playwright")
+
+
 def main() -> int:
     logging.basicConfig(level=logging.ERROR)
     print("flippa-scraper offline suite")
@@ -3370,7 +3782,8 @@ def main() -> int:
                   check_captcha_javascript_actually_runs,
                   check_recaptcha_version_from_markup,
                   check_fingerprint_refusal_is_an_api_error,
-                  check_family_sync_2026_09_29, check_supply_chain):
+                  check_family_sync_2026_09_29, check_supply_chain,
+                  check_audit_2026_11_09):
         group()
 
     print("\n" + "=" * 62)

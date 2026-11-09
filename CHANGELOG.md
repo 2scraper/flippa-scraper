@@ -17,9 +17,31 @@ a bill.
 
 - Locks: `certifi` 2026.7.22 → 2026.10.23 in every lock (PYSEC-2026-4320, fixed in 2026.10.18), which had turned the `pip-audit` job red. The CI-only lock also moves `filelock` to 4.2.9 on Python 3.11+ (4.1.0 on 3.10, the newest that supports it) for advisories published against 4.0.6.
 
+### Added
+
+- `.meta.json` records `route` (`direct`, `proxy`, `proxy_pool`, `cdp`, `scraper_api`), `currencies_by_page` and `currency_mixed`.
+- A proxy may be given as `HOST:PORT:LOGIN:PASSWORD` (optionally with a scheme), the form proxy dashboards list exits in.
+
+### Changed
+
+- No page past the end of the listing is requested: when the site's own match count says the listing ends, the run stops there as `listing_exhausted` (in Scraper API mode that saves a billed task). A 34-match search is now one request.
+- The readiness wait ends as soon as a short page holds what its own count implies; a 4-match search took 2 s on 2026-11-09 instead of 16 s.
+- A proxy exit that fails its preflight is dropped from the pool with a warning and the next one is tried; exit 2 only when no exit works. An exit that answers neither the target nor a neutral address is treated as dead instead of only warning.
+- `diff_runs.py` refuses (exit 2, `--force` overrides) to compare runs of different searches, and reports a sku whose currency changed as not comparable on price instead of as a price change.
+- Duplicates dropped across pages are logged as a warning; a run whose pages carry different currencies warns too.
+- An HTTP 429 now says it is a rate limit and what helps.
+
 ### Fixed
 
 - README: the testing section said the canary runs a scrape a day; it has run weekly since 2026-10-16.
+- `python3 env_config.py` printed a proxy written as `host:port:login:password` in full, and a CDP endpoint whose secret is a query parameter; it now shows only the proxy's host and port and hides every other secret.
+- A proxy in `http://host:port:login:password` form crashed with a traceback quoting the password (exit 1); a malformed proxy value is now exit 2 with the credentials masked, including in the message for a value with no scheme.
+- An `--out` in a directory that cannot be written is exit 2 before any browser starts, instead of a crash after every page had been fetched.
+- Playwright: `--proxy-rotate per-page` now rotates before page 2 (it started at page 3), and `--delay` is applied before page 2 too.
+- `addressable` is `null`, not `false`, when page 2 lies past the end of the listing.
+- The `/fr/`-style locale message no longer claims prices were converted when the site may not have honoured the locale.
+- Offline suite: the fingerprint-refusal check found Playwright's browsers only at the Linux default path and failed on macOS.
+- README: the proxy verification figure (50 listings over 2 pages) was measured at 25 per page, before the site's 2026-09-29 rebuild; it now says so.
 
 ## [0.3.0] — 2026-10-15
 

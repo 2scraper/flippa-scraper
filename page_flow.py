@@ -74,6 +74,36 @@ def expected_records(total_results, page_num: int, page_size: int = PAGE_SIZE):
     return min(page_size, remaining)
 
 
+def listing_ends_before(total_results, page_num: int,
+                        page_size: int = PAGE_SIZE) -> bool:
+    """True when the site's own count says page `page_num` holds nothing.
+
+    A 34-match search is one page. Fetching page 2 anyway cost a request and
+    a 16 s readiness wait (measured 2026-11-09 on "golf") to learn what the
+    count had already said. False whenever the count is unknown or is the
+    10000 cap, so an unknowable end is still found by fetching.
+    """
+    return expected_records(total_results, page_num, page_size) == 0
+
+
+def page_answered(html: Optional[str], card_count: int, page_num: int,
+                  page_size: int = PAGE_SIZE) -> bool:
+    """True once a page holds every card its own match count implies.
+
+    Lets the readiness wait stop on a page that is legitimately short — the
+    last page of a listing, a 4-match search, "Show 0 results", a page past
+    the end — instead of waiting out the full timeout for a sixth card that
+    the site has already said does not exist.
+    """
+    total = results_count(html or "")
+    if total is None:
+        return False
+    if total == 0:
+        return True
+    expected = expected_records(total, page_num, page_size)
+    return expected is not None and card_count >= expected
+
+
 def shortfall(total_results, page_num: int, got: int, page_size: int = PAGE_SIZE):
     """A message naming a page that came back short, or None.
 
@@ -203,7 +233,16 @@ def classify(html: Optional[str], status_code: Optional[int] = None,
                          total_results=total, status_code=status_code)
 
     if status_code in REFUSAL_STATUSES:
-        return PageState(BLOCKED, f"HTTP {status_code}", vendor="http",
+        reason = f"HTTP {status_code}"
+        if status_code == 429:
+            # Flippa's rate limit, not a verdict on the address: on 2026-11-02
+            # about 20 short runs in 5 minutes from one address drew a 429
+            # Cloudflare challenge that headless Chromium did not clear and
+            # that lifted by itself after roughly 10 minutes.
+            reason += (" — rate-limited: wait it out (about 10 minutes when "
+                       "measured), raise --delay, or spread runs over "
+                       "--proxy-file")
+        return PageState(BLOCKED, reason, vendor="http",
                          status_code=status_code)
 
     vendor = detect_bot_challenge(html)
