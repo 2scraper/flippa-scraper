@@ -11,7 +11,10 @@ on:
 
 jobs:
   offline:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 in November 2026, and setup-python
+    # has no Python 3.9 build for it ("version '3.9' ... was not found"), so
+    # the oldest supported Python could not be tested there at all.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:

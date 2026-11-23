@@ -63,6 +63,15 @@ _KEY_PARAM_RE = re.compile(
     r"\b((?:client)?key|token|api[_-]?key|password)=[^&\s\"'<>]+", re.IGNORECASE)
 
 
+# The other shape a proxy credential travels in: `host:port:login:password`,
+# the way proxy dashboards (2Captcha's included) list an exit. No `@`, so the
+# URL pattern above never sees it — and before it was recognised it reached a
+# traceback verbatim.
+_COLON_CREDENTIAL_RE = re.compile(
+    r"\b((?:[a-z0-9-]+\.)+[a-z]{2,}|\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})"
+    r":[^\s:@/'\"]+:[^\s@/'\"]+", re.IGNORECASE)
+
+
 def redact_secret_patterns(text: str) -> str:
     """Remove credentials from a string that is about to be logged or raised.
 
@@ -71,6 +80,7 @@ def redact_secret_patterns(text: str) -> str:
     to stop repeats the same URL several times in one Playwright error.
     """
     text = _CREDENTIAL_URL_RE.sub(r"\1***:***\2", text)
+    text = _COLON_CREDENTIAL_RE.sub(r"\1:\2:***:***", text)
     return _KEY_PARAM_RE.sub(lambda m: m.group(1) + "=***", text)
 
 
@@ -78,8 +88,35 @@ class ProxyError(ValueError):
     """A proxy list that cannot be used as given."""
 
 
+# `[scheme://]host:port:login:password` — see _COLON_CREDENTIAL_RE.
+_COLON_FORM_RE = re.compile(
+    r"^(?:(?P<scheme>[a-z][a-z0-9+.\-]*)://)?(?P<host>[^:/@\s]+)"
+    r":(?P<port>\d{1,5}):(?P<login>[^:/@\s]+):(?P<password>[^/@\s]+)$",
+    re.IGNORECASE)
+
+
+def normalise_proxy(line: str) -> str:
+    """`[scheme://]host:port:login:password` -> `scheme://login:password@host:port`.
+
+    The colon form is how proxy dashboards list an exit, so it is what gets
+    pasted into .env. Read as a URL, its extra colons become part of the
+    port: the run crashed with a traceback quoting the password. Anything
+    else is returned unchanged; the scheme defaults to http.
+    """
+    m = _COLON_FORM_RE.match(line or "")
+    if not m:
+        return line
+    scheme = (m.group("scheme") or "http").lower()
+    userinfo = ":".join((m.group("login"), m.group("password")))
+    hostport = ":".join((m.group("host"), m.group("port")))
+    return scheme + "://" + "@".join((userinfo, hostport))
+
+
 def parse_proxy_line(line: str, source: str = "<arg>") -> Optional[str]:
     """Validate one proxy URL. Returns it, or None for a blank/comment line.
+
+    Accepts the `host:port:login:password` listing form too (see
+    normalise_proxy) and returns it as a URL.
 
     Raises ProxyError with the offending line named — REDACTED, since that
     line can carry a real username:password and an exception's text is a log
@@ -89,8 +126,9 @@ def parse_proxy_line(line: str, source: str = "<arg>") -> Optional[str]:
     if not line or line.startswith("#"):
         return None
 
+    line = normalise_proxy(line)
     parsed = urlparse(line)
-    safe = redact_secret_patterns(line)
+    safe = mask(line)
     if parsed.scheme not in _SUPPORTED_SCHEMES:
         raise ProxyError(
             f"{source}: {safe!r} — scheme must be one of "
@@ -98,6 +136,12 @@ def parse_proxy_line(line: str, source: str = "<arg>") -> Optional[str]:
             f"A bare host:port is not enough; write http://host:port.")
     if not parsed.hostname:
         raise ProxyError(f"{source}: {safe!r} — no host in that URL.")
+    try:
+        parsed.port
+    except ValueError:
+        raise ProxyError(
+            f"{source}: {safe!r} — the port is not a number. Write "
+            f"http://LOGIN:PASSWORD@HOST:PORT or HOST:PORT:LOGIN:PASSWORD.") from None
     if parsed.scheme == "socks5" and (parsed.username or parsed.password):
         raise ProxyError(
             f"{source}: {safe!r} — Chromium cannot authenticate a SOCKS5 "
@@ -127,11 +171,19 @@ def mask(url: Optional[str]) -> str:
     """
     if not url:
         return "(none)"
-    parsed = urlparse(url)
-    host = parsed.hostname or "?"
-    port = f":{parsed.port}" if parsed.port else ""
-    creds = "***:***@" if (parsed.username or parsed.password) else ""
-    return f"{parsed.scheme}://{creds}{host}{port}"
+    # Must never raise: it runs exactly when a value is already malformed,
+    # and a masker that throws hands the caller nothing safe to print.
+    try:
+        parsed = urlparse(normalise_proxy(url))
+        host = parsed.hostname or "?"
+        try:
+            port = f":{parsed.port}" if parsed.port else ""
+        except ValueError:
+            port = ":?"
+        creds = "***:***@" if (parsed.username or parsed.password) else ""
+        return f"{parsed.scheme or '?'}://{creds}{host}{port}"
+    except Exception:  # noqa: BLE001
+        return "(unreadable proxy value, hidden)"
 
 
 def to_playwright(url: Optional[str]) -> Optional[dict]:
@@ -258,29 +310,75 @@ def preflight(url: Optional[str], target: str, timeout: float = 15.0):
     return PREFLIGHT_OK, f"HTTP {response.status_code} through {mask(url)}"
 
 
+# Asked only after the target itself timed out through an exit, to tell a
+# dead exit from a slow site: a 204 with no body, from a host that is up
+# whenever the internet is. If THIS also times out, the exit is what is dead.
+NEUTRAL_PREFLIGHT_URL = "https://www.gstatic.com/generate_204"
+
+
+def preflight_exit(url: Optional[str], target: str, timeout: float = 15.0,
+                   neutral: str = NEUTRAL_PREFLIGHT_URL):
+    """`preflight`, plus a second look when the target did not answer.
+
+    A preflight that only asks the target cannot tell a dead exit from a slow
+    site, so a dead one used to be let through with a warning and cost two
+    minutes of browser timeouts and an exit 5 (measured 2026-11-02). When the
+    target times out, one request to a neutral address settles it: no answer
+    there either means the exit is unusable.
+    """
+    verdict, detail = preflight(url, target, timeout=timeout)
+    if verdict != PREFLIGHT_SLOW or not url:
+        return verdict, detail
+    second, second_detail = preflight(url, neutral, timeout=timeout)
+    if second == PREFLIGHT_OK:
+        return PREFLIGHT_SLOW, (f"{detail}; the exit itself answered a neutral "
+                                f"address, so the target is what is slow")
+    if second == PREFLIGHT_SLOW:
+        return PREFLIGHT_UNUSABLE, (f"no answer in {timeout:.0f}s from the "
+                                    f"target or from a neutral address "
+                                    f"({second_detail})")
+    return second, second_detail
+
+
 def check_exit_or_raise(pool, target: str, timeout: float = 15.0) -> None:
-    """Preflight `pool`'s current exit; raise ProxyError if it cannot work.
+    """Preflight the pool's exits until one works; raise ProxyError if none does.
 
     A rejected or unusable exit is a configuration problem, not a transient
-    one, so it ends the run with exit 2 rather than being retried — while a
-    slow one only warns, because the target may be what is slow.
+    one. With a pool, it is dropped with a warning and the next exit is
+    tried — a dead FIRST line used to end the whole run with exit 2 while
+    working exits sat behind it, and with --proxy-shuffle the outcome
+    depended on which line came first. Exit 2 is reserved for a pool in
+    which no exit works. A slow exit only warns, because the target may be
+    what is slow.
     """
     if not pool:
         return
-    verdict, detail = preflight(pool.current, target, timeout=timeout)
-    if verdict == PREFLIGHT_OK:
-        logger.info("Proxy preflight: %s", detail)
-        return
-    if verdict == PREFLIGHT_SLOW:
-        logger.warning("Proxy preflight through %s did not answer in %.0fs (%s). "
-                       "Continuing — this may be the target rather than the "
-                       "exit.", mask(pool.current), timeout, detail)
-        return
-    raise ProxyError(
-        f"The proxy exit {mask(pool.current)} cannot be used: {detail}. "
-        f"This is the exit, not the site — check the credentials in .env "
-        f"(a rotated password is the usual cause), or pass --proxy-file with "
-        f"another entry.")
+    rejected = []
+    while True:
+        verdict, detail = preflight_exit(pool.current, target, timeout=timeout)
+        if verdict == PREFLIGHT_OK:
+            logger.info("Proxy preflight: %s", detail)
+            return
+        if verdict == PREFLIGHT_SLOW:
+            logger.warning("Proxy preflight through %s did not answer in %.0fs (%s). "
+                           "Continuing.", mask(pool.current), timeout, detail)
+            return
+        rejected.append((mask(pool.current), detail))
+        if len(pool) > 1:
+            logger.warning("Proxy exit %s cannot be used (%s) — dropping it and "
+                           "trying the next one.", mask(pool.current), detail)
+            pool.discard_current()
+            continue
+        if len(rejected) == 1:
+            raise ProxyError(
+                f"The proxy exit {rejected[0][0]} cannot be used: "
+                f"{rejected[0][1]}. This is the exit, not the site — "
+                f"check the credentials in .env (a rotated password is the "
+                f"usual cause), or pass --proxy-file with another entry.")
+        raise ProxyError(
+            f"None of the {len(rejected)} proxy exits can be used — "
+            + "; ".join(f"{m}: {d}" for m, d in rejected)
+            + ". This is the exits, not the site.")
 
 
 class ProxyPool:
@@ -341,6 +439,27 @@ class ProxyPool:
 
     def rotates_per_page(self) -> bool:
         return self.rotate == "per-page"
+
+    def discard_current(self) -> None:
+        """Remove the current exit (one that failed its preflight).
+
+        Removed rather than skipped, so a later rotation and every
+        --concurrency worker built from `proxies` cannot land on it. The
+        cursor then points at the entry that followed it.
+        """
+        if len(self._proxies) <= 1:
+            raise ProxyError("cannot drop the only exit in the pool")
+        del self._proxies[self._index % len(self._proxies)]
+        self._index %= len(self._proxies)
+
+
+def route_name(pool, cdp_endpoint) -> str:
+    """How a run's pages were fetched, for its .meta.json."""
+    if cdp_endpoint:
+        return "cdp"
+    if pool:
+        return "proxy_pool" if len(pool) > 1 else "proxy"
+    return "direct"
 
 
 def from_args(args) -> Optional[ProxyPool]:

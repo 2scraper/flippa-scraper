@@ -99,6 +99,14 @@ than a complete-looking result holding one page. That check exists because an
 earlier version of this repo used a page parameter the site ignored and
 returned one page of rows, reporting success, on every multi-page run.
 
+The site's own match count also says where the listing ends, so no page past
+it is requested: a 34-match search is fetched as one page and recorded as
+`listing_exhausted`, with `addressable: null` because there was no page 2 to
+check. A page that is short on purpose (the last page, a 4-match search,
+"Show 0 results") is read as soon as it holds what its count implies instead
+of after the full 15-second readiness wait — on 2026-11-09 a 4-match search
+took 2 s end to end, down from 16 s.
+
 `--concurrency N` fetches pages 3..N through N workers, each with its own
 browser and its own proxy exit, and only after that check has passed.
 
@@ -150,14 +158,28 @@ cp .env.example .env
 python3 env_config.py     # says what was picked up, without printing it
 ```
 
+`env_config.py` prints the `FLIPPA_URL` value and the proxy's scheme, host and
+port; keys, CDP endpoints and proxy credentials are never shown.
+
+A proxy may be written as a URL, `http://LOGIN:PASSWORD@HOST:PORT`, or in the
+`HOST:PORT:LOGIN:PASSWORD` form proxy dashboards list exits in (an optional
+`http://` in front is fine); both are read the same way.
+
 ## What the paid products buy you
 
-**State it plainly: you do not need any of them for this site.** Every number
-in this README was measured with no API key, no proxy and no Scraping Browser
-— including plain `curl` fetches on 2026-10-14 that each came back with all 50
-cards of a page. flippa.com is behind Cloudflare, but it served an ordinary
-request from an ordinary connection every time it was asked, on 2026-09-19
-and again on 2026-10-14/15 (including from GitHub's runners).
+**State it plainly: you do not need any of them for occasional runs of this
+site.** Every number in this README was measured with no API key, no proxy and
+no Scraping Browser — including plain `curl` fetches on 2026-10-14 that each
+came back with all 50 cards of a page. flippa.com is behind Cloudflare, but it
+served an ordinary request from an ordinary connection on 2026-09-19, on
+2026-10-14/15 (including from GitHub's runners) and on 2026-11-09.
+
+**It does rate-limit one address.** On 2026-11-02 about 20 short runs in five
+minutes from one address drew HTTP 429 with a Cloudflare challenge that
+headless Chromium did not clear; it lifted by itself after roughly ten
+minutes. Such a run ends with exit 3 and a log line saying it was
+rate-limited. Space runs out, keep `--delay` (default 2 s, now also applied
+before page 2), or spread regular collection over `--proxy-file`.
 
 What the four 2Captcha products (one key, billed separately) actually buy —
 each line says whether it was run against the live API on 2026-09-19:
@@ -165,8 +187,13 @@ each line says whether it was run against the live API on 2026-09-19:
 * **Proxies** (`--proxy`, `--proxy-file`) — volume from many addresses, and a
   specific country. `--proxy-rotate per-page` relaunches the browser on each
   new exit, because carrying a session across addresses is a stronger signal
-  than either address alone. **Verified:** a 2-page run through
-  `eu.proxy.2captcha.com:2334` returned 50 listings, exit 0, with the
+  than either address alone; rotation starts at page 2. Before any browser
+  starts, each exit gets one request: an exit that refuses it is dropped
+  from the pool with a warning and the next one is used (exit 2 only when no
+  exit works), and an exit that answers neither flippa.com nor a neutral
+  address is treated as dead rather than slow. **Verified:** a 2-page run
+  through `eu.proxy.2captcha.com:2334` on 2026-09-19 returned 50 listings
+  (25 per page, before the site's 2026-09-29 rebuild), exit 0, with the
   credentials passed through Playwright's own fields and only `host:port` in
   the browser's argv.
 * **Captcha solving** (`--twocaptcha-key`) — for the challenge this site does
@@ -210,7 +237,7 @@ same situation.
 |---|---|
 | 0 | listings written |
 | 1 | crash |
-| 2 | bad usage, including an exit that fails its preflight — one small request through the proxy before any browser starts, so a rotated password costs a second rather than three minutes of timeouts |
+| 2 | bad usage, including an `--out` that cannot be written and a proxy setup in which no exit passes its preflight — one small request through each exit before any browser starts, so a rotated password costs a second rather than three minutes of timeouts |
 | 3 | blocked before parsing — a challenge, a refusal status, or a page not built out of Flippa's own assets |
 | 4 | zero listings, and the run can show the listing is empty: the site says the query matches nothing, or the listing ran out |
 | 5 | zero listings because the content was never obtained: a remote API error, a navigation timeout, a dead proxy, a page that never painted, or a page of listings the parser could not read |
@@ -234,8 +261,16 @@ entered-window / left-window, keeping them out of `--fail-on-change`.
 The sidecar also carries **which** pages failed by number, `pages_missing`
 for pages that were requested and never came back at all, the site's own
 `total_results` as of the first and the last page with `catalog_mutated` when
-those differ, `rows_before_dedupe` and `duplicate_skus_across_pages`, and
-whether pagination was addressable.
+those differ, `rows_before_dedupe` and `duplicate_skus_across_pages`, whether
+pagination was addressable, `currencies_by_page` with `currency_mixed` when
+pages disagree, and `route` — how the pages were fetched: `direct`, `proxy`,
+`proxy_pool`, `cdp` or `scraper_api`. Duplicates, a moving match count and
+mixed currencies are also logged as warnings.
+
+`diff_runs.py` also refuses (exit 2, `--force` to override) to compare runs of
+different searches — a different query, filter or locale path in
+`start_url` — and reports a sku whose currency changed between runs as not
+comparable on price rather than as a price change.
 
 A run is `complete` only when its stop reason says so **and** every requested
 page is accounted for. The page count is checked independently of the stop
@@ -284,6 +319,11 @@ Both rows are correct for the page they came from. The `currency` column
 follows the page rather than defaulting, each engine says which localisation
 it is scraping before it starts, and the locale segment is not mistaken for a
 category label. Do not mix two locales in one dataset.
+
+Flippa does not serve a localised path consistently. On 2026-11-02 one `/fr/`
+run came back in EUR on page 1 and in USD on pages 2-3; on 2026-11-09 the
+same URL came back in USD on every page. A run whose pages carry different
+currencies says so in its log and records `currency_mixed: true`.
 
 The key-data labels are localised too ("Industrie", "Ancienneté", "Profit"),
 which is why the profit is read by the SHAPE of its value rather than by an

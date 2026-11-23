@@ -13,6 +13,7 @@ single request, after burning a proxy rotation.
 """
 
 import argparse
+import os
 from urllib.parse import urlparse
 
 # The only host these engines know how to read. Not a hard refusal: a mirror,
@@ -76,3 +77,27 @@ def check_listing_url(url: str) -> list:
 def host_is_expected(url: str) -> bool:
     host = (urlparse(url or "").hostname or "").lower()
     return host == EXPECTED_HOST_SUFFIX or host.endswith("." + EXPECTED_HOST_SUFFIX)
+
+
+def check_out_prefix(out: str) -> list:
+    """Return the problems with writing `<out>.json` etc.; empty means usable.
+
+    Checked before a browser starts. The writer creates missing directories,
+    so what has to be writable is the nearest directory that already exists.
+    Found the other way round, an unwritable --out crashed with a traceback
+    AFTER every page had been fetched, and a 30-page run was lost to it.
+    """
+    directory = os.path.dirname(os.path.abspath(out or "."))
+    probe = directory
+    while not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+    if not os.path.isdir(probe):
+        return [f"--out {out!r}: {probe} exists and is not a directory"]
+    if not os.access(probe, os.W_OK | os.X_OK):
+        where = ("" if probe == directory
+                 else f" (to create {directory} inside it)")
+        return [f"--out {out!r}: cannot write into {probe}{where}"]
+    return []
