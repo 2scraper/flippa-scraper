@@ -15,6 +15,7 @@ a bill.
 
 ### Security
 
+- Locks: `soupsieve` 2.10 → 4.1.3 on Python 3.11.5+ (CVE-2026-126190, CVE-2026-126191, CVE-2026-126193), which had turned the `pip-audit` job red. The fixed releases need Python 3.11.5 or newer, so older interpreters keep 2.8.4 / 2.10; nothing else in the locks moved.
 - Locks: `certifi` 2026.7.22 → 2026.10.23 in every lock (PYSEC-2026-4320, fixed in 2026.10.18), which had turned the `pip-audit` job red. The CI-only lock also moves `filelock` to 4.2.9 on Python 3.11+ (4.1.0 on 3.10, the newest that supports it) for advisories published against 4.0.6.
 
 ### Added
