@@ -9,14 +9,24 @@ a bill.
 
 ## [Unreleased]
 
-### Changed
+## [0.3.1] — 2026-11-23
 
-- CI only: the canary now runs weekly (Mondays 06:23 UTC) and on a manual dispatch, with its optional secret `FLIPPA_PROXY` passed on every run; the daily schedule is removed.
-
-### Security
-
-- Locks: `soupsieve` 2.10 → 4.1.3 on Python 3.11.5+ (CVE-2026-126190, CVE-2026-126191, CVE-2026-126193), which had turned the `pip-audit` job red. The fixed releases need Python 3.11.5 or newer, so older interpreters keep 2.8.4 / 2.10; nothing else in the locks moved.
-- Locks: `certifi` 2026.7.22 → 2026.10.23 in every lock (PYSEC-2026-4320, fixed in 2026.10.18), which had turned the `pip-audit` job red. The CI-only lock also moves `filelock` to 4.2.9 on Python 3.11+ (4.1.0 on 3.10, the newest that supports it) for advisories published against 4.0.6.
+> **Behaviour changes.**
+> - Runs stop at the end of the listing that Flippa's own match count
+>   implies instead of fetching one more empty page. A search with 50
+>   matches or fewer is now a single request, and its `.meta.json` has
+>   `addressable: null` (was `false`).
+> - Exit **2** now also covers an `--out` that cannot be written (it was a
+>   crash, exit 1, after every page had been fetched) and a malformed proxy
+>   value (a traceback, exit 1).
+> - With `--proxy-file`, an exit that fails the preflight is dropped and the
+>   next one is used; the run ends with exit 2 only when no exit works (it
+>   used to end on the first bad line).
+> - `diff_runs.py` exits **2** for two runs of different searches unless
+>   `--force` is given, and no longer counts a currency conversion as a
+>   price change under `--fail-on-change`.
+> - Playwright: `--proxy-rotate per-page` rotates from page 2 (it started at
+>   page 3), and `--delay` is now also applied before page 2.
 
 ### Added
 
@@ -31,6 +41,7 @@ a bill.
 - `diff_runs.py` refuses (exit 2, `--force` overrides) to compare runs of different searches, and reports a sku whose currency changed as not comparable on price instead of as a price change.
 - Duplicates dropped across pages are logged as a warning; a run whose pages carry different currencies warns too.
 - An HTTP 429 now says it is a rate limit and what helps.
+- CI only: the canary now runs weekly (Mondays 06:23 UTC) and on a manual dispatch, with its optional secret `FLIPPA_PROXY` passed on every run; the daily schedule is removed.
 
 ### Fixed
 
@@ -44,6 +55,11 @@ a bill.
 - CI only: the offline job runs on `ubuntu-24.04`; on `ubuntu-latest` (now 26.04) `setup-python` has no Python 3.9, the oldest version this project supports.
 - Offline suite: the fingerprint-refusal check found Playwright's browsers only at the Linux default path and failed on macOS.
 - README: the proxy verification figure (50 listings over 2 pages) was measured at 25 per page, before the site's 2026-09-29 rebuild; it now says so.
+
+### Security
+
+- Locks: `soupsieve` 2.10 → 4.1.3 on Python 3.11.5+ (CVE-2026-126190, CVE-2026-126191, CVE-2026-126193), which had turned the `pip-audit` job red. The fixed releases need Python 3.11.5 or newer, so older interpreters keep 2.8.4 / 2.10; nothing else in the locks moved.
+- Locks: `certifi` 2026.7.22 → 2026.10.23 in every lock (PYSEC-2026-4320, fixed in 2026.10.18), which had turned the `pip-audit` job red. The CI-only lock also moves `filelock` to 4.2.9 on Python 3.11+ (4.1.0 on 3.10, the newest that supports it) for advisories published against 4.0.6.
 
 ## [0.3.0] — 2026-10-15
 
