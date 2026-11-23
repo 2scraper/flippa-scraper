@@ -40,6 +40,7 @@ a bill.
 - Playwright: `--proxy-rotate per-page` now rotates before page 2 (it started at page 3), and `--delay` is applied before page 2 too.
 - `addressable` is `null`, not `false`, when page 2 lies past the end of the listing.
 - The `/fr/`-style locale message no longer claims prices were converted when the site may not have honoured the locale.
+- CI only: the offline job runs on `ubuntu-24.04`; on `ubuntu-latest` (now 26.04) `setup-python` has no Python 3.9, the oldest version this project supports.
 - Offline suite: the fingerprint-refusal check found Playwright's browsers only at the Linux default path and failed on macOS.
 - README: the proxy verification figure (50 listings over 2 pages) was measured at 25 per page, before the site's 2026-09-29 rebuild; it now says so.
 
