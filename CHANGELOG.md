@@ -9,6 +9,10 @@ a bill.
 
 ## [Unreleased]
 
+### Changed
+
+- Docker: the image installs `libatomic1` before Playwright. Recent Playwright releases' Node driver needs it to run `playwright install` at all, and the slim base image does not ship it, so the image build failed.
+
 ## [0.3.1] — 2026-11-23
 
 > **Behaviour changes.**
